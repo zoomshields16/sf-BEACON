@@ -4,10 +4,12 @@ Disaster-response voice/text agent for State Farm policyholders (HackUTD 2026). 
 
 ## Setup
 ```bash
+brew install postgresql@17 postgis && brew services start postgresql@17
+# if node breaks after installing postgis (libsimdjson error): brew reinstall node
 npm install
-cp .env.example .env          # fill in keys
-createdb safenet && psql safenet -c "create extension if not exists postgis"
-npm run db:setup              # schema → functions → seed
+cp .env.example .env          # fill in keys (get the real .env from a teammate)
+npm run db:setup              # creates "safenet", loads schema → functions → seed (re-runnable)
+npm run db:reset              # wipe demo activity for alert 1 (then POST /api/alerts/1/activate)
 npm run dev                   # http://localhost:3000/health
 ```
 
