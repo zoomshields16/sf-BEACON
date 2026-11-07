@@ -108,5 +108,6 @@ export const TOOLS: Record<string, ToolDef> = {
 };
 
 export const COORDINATOR_TOOLS = [
-  "get_call_queue", "get_hex_risk", "get_person_context", "place_voice_call", "send_text", "get_call_result", "escalate_to_911",
+  "get_call_queue", "get_hex_risk", "get_person_context", "place_voice_call", "get_call_result", "escalate_to_911",
+  ...(process.env.TEXTS_ENABLED === "true" ? ["send_text"] : []),
 ].map((n) => TOOLS[n]);

@@ -27,8 +27,12 @@ function clearInFlight(alertId: Id, personId: Id) {
   inFlight.delete(k);
 }
 
-export async function contactPerson(alertId: Id, personId: Id, channel: Channel) {
+// Texting is off unless TEXTS_ENABLED=true: every contact is a call (call_queue's "sms" becomes another call).
+export const textsEnabled = () => process.env.TEXTS_ENABLED === "true";
+
+export async function contactPerson(alertId: Id, personId: Id, requested: Channel) {
   if (isInFlight(alertId, personId)) return { status: "skipped", detail: "contact already in progress" };
+  const channel: Channel = requested === "sms" && !textsEnabled() ? "voice" : requested;
 
   const ctx = await personContext(personId, alertId);
   const phone = ctxPhone(ctx) ?? (process.env.MOCK_CALLS === "true" ? `+1555${String(personId).padStart(7, "0")}` : undefined);
@@ -120,7 +124,7 @@ export async function handleCallEnded(r: CallResult) {
   await maybeEscalate(ctx, triage, alertId, personId);
 
   // Belt-and-braces: a critical call also gets the 911 instruction in writing.
-  if (triage.status === "critical") {
+  if (triage.status === "critical" && textsEnabled()) {
     const phone = ctxPhone(ctx);
     const text = `State Farm SafeNet: ${EMERGENCY_LINE.replace("hang up and ", "")} We have flagged your case for emergency responders.`;
     if (phone) {
