@@ -41,6 +41,9 @@ function lastUserText(chatCtx: llm.ChatContext): string {
   return "";
 }
 
+/** Text as the TTS should pronounce it ("911" → "nine-one-one", not "nine hundred eleven"). Transcript keeps the original. */
+export const speakable = (text: string) => text.replace(/\b9-?1-?1\b/g, "nine-one-one");
+
 function userTurnCount(chatCtx: llm.ChatContext): number {
   return chatCtx.items.filter((i: any) => i?.type === "message" && i.role === "user").length;
 }
@@ -55,7 +58,7 @@ class SafeNetCaller extends voice.Agent {
   /** Speak via session.say (used for the opening and for final lines, so we can hang up after playout). */
   private speak(r: BrainReply) {
     this.transcript.push({ role: "agent", content: r.say }); console.log(`AGENT: ${r.say}`);
-    const handle = this.session.say(r.say, { allowInterruptions: !r.endCall });
+    const handle = this.session.say(speakable(r.say), { allowInterruptions: !r.endCall });
     if (r.endCall) handle.waitForPlayout().then(() => this.hangup()).catch(() => this.hangup());
   }
 
@@ -72,7 +75,7 @@ class SafeNetCaller extends voice.Agent {
     const turnKey = `${userTurnCount(chatCtx)}:${said}`;
     if (turnKey === this.lastTurnKey && this.lastReply && !this.lastReply.endCall) {
       const again = this.lastReply.say;
-      return new ReadableStream<string>({ start(c) { c.enqueue(again); c.close(); } });
+      return new ReadableStream<string>({ start(c) { c.enqueue(speakable(again)); c.close(); } });
     }
     this.lastTurnKey = turnKey;
     if (said) { this.transcript.push({ role: "user", content: said }); console.log(`CALLER: ${said}`); }
@@ -83,7 +86,7 @@ class SafeNetCaller extends voice.Agent {
       return null;
     }
     this.transcript.push({ role: "agent", content: r.say }); console.log(`AGENT: ${r.say}`);
-    return new ReadableStream<string>({ start(c) { c.enqueue(r.say); c.close(); } });
+    return new ReadableStream<string>({ start(c) { c.enqueue(speakable(r.say)); c.close(); } });
   }
 }
 
