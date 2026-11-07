@@ -38,3 +38,9 @@ text follow-up that quotes the call. Every step lands in `agent_log`.
 | POST | `/webhooks/sms` | inbound text `{from, text}` |
 
 Retell setup: `docs/retell-agent-prompt.md`. **Table column names are assumed in `src/repo.ts`** — fix there once `db/` lands.
+
+## Dashboard
+```bash
+npm run web:install && npm run web     # http://localhost:5173  (proxies /api → :3000)
+```
+`http://localhost:5173/?mock=1` runs the dashboard on in-browser demo data (no backend needed). `?alert=<id>` picks the alert.
