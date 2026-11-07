@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { activateAlert, logAgent, simulateReports } from "../repo.js";
+import { activateAlert, logAgent, resetDemo, simulateReports } from "../repo.js";
 import { coordinatorRound, isAutopilot, startAutopilot, stopAutopilot } from "../agents/coordinator.js";
 import { contactPerson } from "../agents/pipeline.js";
 
@@ -13,6 +13,12 @@ alerts.post("/:id/activate", async (req, res) => {
   const autopilot = req.query.autopilot !== "false";
   if (autopilot) startAutopilot(id);
   res.json({ ok: true, result, autopilot });
+});
+
+// Demo rehearsal: stop the agent and wipe all activity for this alert (then press Activate again).
+alerts.post("/:id/reset", async (req, res) => {
+  stopAutopilot(req.params.id);
+  res.json(await resetDemo(req.params.id));
 });
 
 alerts.post("/:id/autopilot/start", (req, res) => res.json({ started: startAutopilot(req.params.id) }));

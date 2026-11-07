@@ -58,7 +58,6 @@ export function PersonPanel({ alertId, personId, onClose, notify }: Props) {
 
       <div className="person-actions">
         <button className="btn" onClick={() => contact("voice")}>📞 Call now</button>
-        <button className="btn" onClick={() => contact("sms")}>💬 Follow up by text</button>
       </div>
 
       <h4>Conversation</h4>

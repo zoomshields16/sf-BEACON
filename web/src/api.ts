@@ -49,6 +49,7 @@ export const api = {
   person: (a: string, p: string | number) => get<Json>(`/api/alerts/${a}/people/${p}`),
   autopilot: (a: string) => get<{ running: boolean }>(`/api/alerts/${a}/autopilot`),
   activate: (a: string) => post<Json>(`/api/alerts/${a}/activate`),
+  reset: (a: string) => post<Json>(`/api/alerts/${a}/reset`),
   setAutopilot: (a: string, on: boolean) => post<Json>(`/api/alerts/${a}/autopilot/${on ? "start" : "stop"}`),
   round: (a: string) => post<Json>(`/api/alerts/${a}/round`),
   contact: (a: string, p: string | number, channel: "voice" | "sms") =>

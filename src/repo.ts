@@ -24,6 +24,7 @@ const DB_FUNCTIONS = new Set([
   "map_people_geojson",
   "map_hex_geojson",
   "simulate_reports",
+  "reset_demo",
 ]);
 
 /** Calls a whitelisted SQL function with parameterized args. Unwraps single scalar/json results. */
@@ -39,6 +40,7 @@ async function fn(name: string, args: unknown[]): Promise<any> {
 }
 
 export const activateAlert = (alertId: Id) => fn("activate_alert", [alertId]);
+export const resetDemo = (alertId: Id) => fn("reset_demo", [alertId]);
 export const callQueue = (alertId: Id, limit: number): Promise<Row[]> => fn("call_queue", [alertId, limit]);
 export const personContext = (personId: Id, alertId: Id): Promise<Row> => fn("person_context", [personId, alertId]);
 export const alertStats = async (alertId: Id) => {

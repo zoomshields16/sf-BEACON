@@ -141,6 +141,9 @@ export function mockRequest(method: string, path: string, _body?: unknown): any 
     active = true; clearInterval(timer); step(); timer = window.setInterval(step, 4000);
     return { ok: true };
   }
+  if (m(/\/reset$/)) { active = false; clearInterval(timer); log.length = 0; escalations.length = 0;
+    people.forEach((p) => Object.assign(p, { status: "unreached", urgency: 0, attempts: 0, needs: [], notes: "", history: [] }));
+    hexes.forEach((h) => (h.risk = rnd() * 0.3)); return { reset: true }; }
   if (m(/\/autopilot\/stop$/)) { active = false; clearInterval(timer); return { stopped: true }; }
   if (m(/\/round$/)) { step(); return { ok: true }; }
   const contact = m(/\/people\/(\d+)\/contact$/);

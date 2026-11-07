@@ -7,6 +7,15 @@ import { AgentLog } from "./components/AgentLog";
 import { Escalations } from "./components/Escalations";
 import { PersonPanel } from "./components/PersonPanel";
 
+// Inline confirm (no browser dialog): first click arms, second click within 3 s resets.
+let resetArmedAt = 0;
+function confirmReset() {
+  const now = Date.now();
+  if (now - resetArmedAt < 3000) { resetArmedAt = 0; return true; }
+  resetArmedAt = now;
+  return false;
+}
+
 const initialAlert = new URLSearchParams(location.search).get("alert") ?? "1";
 
 export default function App() {
@@ -89,6 +98,7 @@ export default function App() {
             {autopilot.data?.running ? "Pause agent" : "Resume agent"}
           </button>
           <button className="btn" onClick={() => run("Coordinator round started", () => api.round(alertId))}>Run round</button>
+          <button className="btn btn-ghost" onClick={() => { if (confirmReset()) run("Demo reset — press Activate alert", async () => { await api.reset(alertId); setLog([]); lastLogId.current = 0; setSelected(null); }); }}>Reset</button>
           <button className={`btn ${simulateMode ? "btn-active" : ""}`} onClick={() => setSimulateMode((s) => !s)}
                   title="Click the map to drop 25 crowdsourced hazard reports">
             {simulateMode ? "Click map to report…" : "Simulate reports"}

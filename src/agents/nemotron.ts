@@ -136,6 +136,31 @@ export interface ToolDef {
   run: (args: any, ctx: ToolContext) => Promise<unknown>;
 }
 
+/** Human-readable line for a tool call when the model didn't write its own thought. */
+function describe(tool: string, args: any, out: any): string {
+  try {
+    switch (tool) {
+      case "get_call_queue": {
+        const rows = Array.isArray(out) ? out : [];
+        const top = rows.slice(0, 3).map((r: any) => `${r.name} (${r.priority})`).join(", ");
+        return `Pulled call queue: ${rows.length} waiting${top ? ` — top: ${top}` : ""}`;
+      }
+      case "get_hex_risk": {
+        const hot = (Array.isArray(out) ? out : []).filter((h: any) => Number(h.risk) >= 0.5);
+        return hot.length ? `Checked flood risk: ${hot.length} high-risk zone(s), worst ${Number(hot[0].risk).toFixed(2)}` : "Checked flood risk: no high-risk zones yet";
+      }
+      case "get_person_context": {
+        const p = out?.profile ?? {};
+        const bits = [p.age && `${p.age}`, p.medical_needs, p.mobility_limited && "limited mobility", p.household_size && `household of ${p.household_size}`].filter(Boolean);
+        return `Reviewing ${p.name ?? `#${args.person_id}`}${bits.length ? `: ${bits.join(", ")}` : ""}`;
+      }
+      case "get_call_result": return `Checking call result for #${args.person_id}: ${out?.triage?.status ?? out?.attempt?.status ?? "pending"}`;
+      case "escalate_to_911": return `Escalating #${args.person_id} to 911 review: ${args.reason ?? ""}`;
+      default: return `${tool}(${JSON.stringify(args).slice(0, 80)})`;
+    }
+  } catch { return `calling ${tool}`; }
+}
+
 const truncate = (v: unknown, n = 3500) => {
   const s = typeof v === "string" ? v : JSON.stringify(v);
   return s.length > n ? s.slice(0, n) + "…(truncated)" : s;
@@ -208,15 +233,19 @@ export async function runAgent(opts: {
         }
         toolCalls++;
         called.push(call.function.name);
-        await logAgent({
-          alertId,
-          personId: args?.person_id ?? null,
-          agent,
-          thought: thought || `calling ${call.function.name}`,
-          tool: call.function.name,
-          input: args,
-          output,
-        });
+        // place_voice_call / send_text are already logged by the pipeline ("Calling Maria") unless the model explained itself.
+        const selfLogged = ["place_voice_call", "send_text"].includes(call.function.name);
+        if (thought || !selfLogged) {
+          await logAgent({
+            alertId,
+            personId: args?.person_id ?? null,
+            agent,
+            thought: thought || describe(call.function.name, args, output),
+            tool: call.function.name,
+            input: args,
+            output,
+          });
+        }
         messages.push({ role: "tool", tool_call_id: call.id, content: truncate(output) });
       }
     }
