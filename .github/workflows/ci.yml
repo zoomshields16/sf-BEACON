@@ -1,0 +1,65 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend — typecheck + safety tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  database:
+    name: Database — schema, functions, seed, tests (PostGIS)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env: { PGHOST: localhost, PGUSER: postgres, PGPASSWORD: postgres }
+    steps:
+      - uses: actions/checkout@v4
+      - run: createdb safenet
+      - run: psql -v ON_ERROR_STOP=1 -q -d safenet -f db/schema.sql -f db/functions.sql -f db/seed.sql
+      - run: psql -v ON_ERROR_STOP=1 -d safenet -f db/test.sql
+      - name: Seed is re-runnable
+        run: psql -v ON_ERROR_STOP=1 -q -d safenet -f db/schema.sql -f db/functions.sql -f db/seed.sql
+
+  web:
+    name: Dashboard — typecheck + build
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: web } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vite build
+
+  secrets:
+    name: No secrets committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No .env files tracked
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$|(^|/)\.env\.(local|prod)'; then echo "::error::.env file is tracked"; exit 1; fi
+      - name: No API keys in the tree
+        run: |
+          if git grep -nE 'nvapi-[A-Za-z0-9_-]{20,}|\bAPI[A-Za-z0-9]{12}\b|(SECRET|PASSWORD)=[^[:space:]]{8,}' -- . ':!package-lock.json' ':!web/package-lock.json' ':!.github/' ':!.githooks/'; then
+            echo "::error::Possible secret committed"; exit 1; fi

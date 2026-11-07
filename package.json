@@ -12,7 +12,9 @@
     "web:install": "npm --prefix web install",
     "agent": "tsx src/voice/agent.ts dev",
     "db:reset": "psql -q -d ${DATABASE_URL:-safenet} -c \"select reset_demo(1)\"",
-    "prepare": "git config core.hooksPath .githooks || true"
+    "prepare": "git config core.hooksPath .githooks || true",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:db": "psql -v ON_ERROR_STOP=1 -q -d ${DATABASE_URL:-safenet} -f db/test.sql"
   },
   "engines": {
     "node": ">=20"
