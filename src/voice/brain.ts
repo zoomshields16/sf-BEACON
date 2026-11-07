@@ -28,6 +28,7 @@ export const getCallSession = (attemptId: Id) => sessions.get(String(attemptId))
 export const dropCallSession = (attemptId: Id) => sessions.delete(String(attemptId));
 
 const MAX_FOLLOWUPS = 3;
+const NON_ANSWER = /^(hello|hi|hey|yes\?|what|huh|sorry|pardon|who is this|who's this|who is calling|can you repeat( that)?|say that again)[\s?.!,]*$/i;
 const ACK_TIMEOUT_MS = Number(process.env.VOICE_ACK_TIMEOUT_MS ?? 1500);
 const TURN_TIMEOUT_MS = Number(process.env.VOICE_TURN_TIMEOUT_MS ?? 3500);
 const DANGER_TIMEOUT_MS = Number(process.env.VOICE_DANGER_TIMEOUT_MS ?? 2000);
@@ -101,6 +102,12 @@ JSON: {"danger": boolean, "reason": "max 8 words"}`,
   }
 
   private async normalReply(transcript: Turn[]): Promise<BrainReply> {
+    // Greetings / confusion aren't answers — re-introduce and repeat the current question.
+    const lastUser = [...transcript].reverse().find((t) => t.role === "user")?.content.trim() ?? "";
+    if (NON_ANSWER.test(lastUser) && this.lastAsked) {
+      return { say: `This is the State Farm SafeNet assistant, checking on your safety. ${this.lastAsked}`, endCall: false };
+    }
+
     // (1) Fixed safety questions, verbatim, with a short Nemotron acknowledgement.
     if (this.coreIdx < CORE_QUESTIONS.length) {
       const q = CORE_QUESTIONS[this.coreIdx++];

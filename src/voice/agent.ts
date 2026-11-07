@@ -41,6 +41,10 @@ function lastUserText(chatCtx: llm.ChatContext): string {
   return "";
 }
 
+function userTurnCount(chatCtx: llm.ChatContext): number {
+  return chatCtx.items.filter((i: any) => i?.type === "message" && i.role === "user").length;
+}
+
 class SafeNetCaller extends voice.Agent {
   readonly transcript: Turn[] = [];
 
@@ -50,7 +54,7 @@ class SafeNetCaller extends voice.Agent {
 
   /** Speak via session.say (used for the opening and for final lines, so we can hang up after playout). */
   private speak(r: BrainReply) {
-    this.transcript.push({ role: "agent", content: r.say });
+    this.transcript.push({ role: "agent", content: r.say }); console.log(`AGENT: ${r.say}`);
     const handle = this.session.say(r.say, { allowInterruptions: !r.endCall });
     if (r.endCall) handle.waitForPlayout().then(() => this.hangup()).catch(() => this.hangup());
   }
@@ -59,15 +63,26 @@ class SafeNetCaller extends voice.Agent {
     this.speak(this.brain.opening());
   }
 
+  private lastTurnKey = "";
+  private lastReply: BrainReply | null = null;
+
   async llmNode(chatCtx: llm.ChatContext, ..._rest: unknown[]): ReturnType<voice.Agent["llmNode"]> {
     const said = lastUserText(chatCtx);
-    if (said) this.transcript.push({ role: "user", content: said });
+    // LiveKit can invoke llmNode more than once for the same caller turn — never advance the script twice.
+    const turnKey = `${userTurnCount(chatCtx)}:${said}`;
+    if (turnKey === this.lastTurnKey && this.lastReply && !this.lastReply.endCall) {
+      const again = this.lastReply.say;
+      return new ReadableStream<string>({ start(c) { c.enqueue(again); c.close(); } });
+    }
+    this.lastTurnKey = turnKey;
+    if (said) { this.transcript.push({ role: "user", content: said }); console.log(`CALLER: ${said}`); }
     const r = await this.brain.reply(this.transcript);
+    this.lastReply = r;
     if (r.endCall) {
       this.speak(r);
       return null;
     }
-    this.transcript.push({ role: "agent", content: r.say });
+    this.transcript.push({ role: "agent", content: r.say }); console.log(`AGENT: ${r.say}`);
     return new ReadableStream<string>({ start(c) { c.enqueue(r.say); c.close(); } });
   }
 }
@@ -84,8 +99,11 @@ export default defineAgent({
 
     let finished = false;
     const finish = async () => {
-      if (finished || attempt == null) return;
+      if (finished) return;
       finished = true;
+      console.log(`\n===== CALL TRANSCRIPT (${ctx.room.name}) =====\n` +
+        agent.transcript.map((t) => `${t.role === "agent" ? "AGENT" : "CALLER"}: ${t.content}`).join("\n") + "\n=====\n");
+      if (attempt == null) return;
       const answered = agent.transcript.some((t) => t.role === "user");
       await api(`/internal/calls/${attempt}/ended`, { answered, transcript: agent.transcript }).catch(console.error);
     };
@@ -104,6 +122,7 @@ export default defineAgent({
     ctx.addShutdownCallback(finish);
 
     const vsession = new voice.AgentSession({
+      turnHandling: { preemptiveGeneration: { enabled: false } },
       stt: (process.env.LIVEKIT_STT ?? "deepgram/nova-3") as any,
       tts: (process.env.LIVEKIT_TTS ?? "cartesia/sonic-3") as any,
       // Nominal: replies come from the llmNode override, but the pipeline expects an LLM to be configured.
