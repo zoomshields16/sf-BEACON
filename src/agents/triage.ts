@@ -1,0 +1,149 @@
+import { chatJSON, chatText } from "./nemotron.js";
+import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger, fallbackFollowups } from "./safety.js";
+import { ctxEventType, ctxHistory, ctxName, logAgent, type Id, type Row, type TriageFields } from "../repo.js";
+
+export interface CallScript {
+  opening: string;
+  questions: string[]; // always starts with CORE_QUESTIONS
+  closing: string;
+  source: "nemotron" | "fallback";
+}
+
+const isStrArray = (x: unknown, max: number): x is string[] =>
+  Array.isArray(x) && x.length > 0 && x.length <= max && x.every((s) => typeof s === "string" && s.length > 3 && s.length < 220);
+
+/** Pre-call: 3 fixed safety questions + 2–3 generated from person_context. Never fails. */
+export async function generateCallScript(ctx: Row, alertId: Id, personId: Id): Promise<CallScript> {
+  const event = ctxEventType(ctx);
+  const generated = await chatJSON(
+    `You write follow-up questions for a State Farm disaster check-in phone call.
+The call already asks these fixed questions first: ${CORE_QUESTIONS.join(" | ")}
+Write 2-3 SHORT, plain-language follow-up questions tailored to this person (household, medical needs, pets,
+SafeRoom, location, prior answers). Never repeat the fixed questions. JSON: {"questions": ["..."]}`,
+    JSON.stringify(ctx).slice(0, 6000),
+    (x: any) => (isStrArray(x?.questions, 3) ? (x.questions as string[]) : null),
+  );
+  const followups = generated ?? fallbackFollowups(event).slice(0, 3);
+  const source = generated ? "nemotron" : "fallback";
+
+  const script: CallScript = {
+    opening: `Hi ${ctxName(ctx)}, this is the State Farm SafeNet assistant calling about the ${event} in your area. I have a few quick safety questions.`,
+    questions: [...CORE_QUESTIONS, ...followups],
+    closing: `Thank you. If anything changes or you are in danger, call 911. We'll follow up by text.`,
+    source,
+  };
+  await logAgent({
+    alertId, personId, agent: "triage", tool: "generate_call_script",
+    thought: source === "nemotron" ? "Generated personalized follow-up questions" : "Nemotron unavailable/invalid — using fixed question list",
+    output: script,
+  });
+  return script;
+}
+
+// ---------- post-call / post-text extraction ----------
+const STATUSES = ["safe", "needs_help", "critical", "unreached"] as const;
+
+function validateTriage(x: any): TriageFields | null {
+  if (!x || !STATUSES.includes(x.status)) return null;
+  const score = Number(x.urgency_score);
+  if (!Number.isFinite(score)) return null;
+  return {
+    status: x.status,
+    urgency_score: Math.max(0, Math.min(100, Math.round(score))),
+    emergency_type: typeof x.emergency_type === "string" ? x.emergency_type : null,
+    needs: Array.isArray(x.needs) ? x.needs.filter((n: unknown) => typeof n === "string").slice(0, 10) : [],
+    location_in_home: typeof x.location_in_home === "string" ? x.location_in_home : null,
+    notes: typeof x.notes === "string" ? x.notes.slice(0, 1000) : "",
+  };
+}
+
+function heuristicTriage(userText: string): TriageFields {
+  const t = userText.toLowerCase();
+  const needs = [
+    [/power|electric/, "power"], [/water|thirst/, "water"], [/food/, "food"],
+    [/medic|insulin|oxygen|prescription/, "medication"], [/shelter|place to stay|evacuat/, "shelter"],
+    [/ride|transport|car/, "transportation"],
+  ].filter(([re]) => (re as RegExp).test(t)).map(([, n]) => n as string);
+  const negative = /\b(no|not|isn'?t|aren'?t|can'?t|unsafe|damage|leak|hurt|injur)\b/.test(t);
+  const status: TriageFields["status"] = needs.length || negative ? "needs_help" : "safe";
+  return {
+    status,
+    urgency_score: status === "safe" ? 10 : 50,
+    emergency_type: null,
+    needs,
+    location_in_home: null,
+    notes: "Heuristic triage (Nemotron unavailable).",
+  };
+}
+
+/**
+ * Extracts structured triage from a conversation. `userText` = only the policyholder's words.
+ * Safety override: any danger keyword forces `critical` regardless of what the model says.
+ */
+export async function extractTriage(
+  ctx: Row, transcript: string, userText: string, alertId: Id, personId: Id,
+): Promise<TriageFields> {
+  const danger = detectDanger(userText);
+  const llm = await chatJSON(
+    `You are a disaster triage analyst. From the conversation, extract:
+{"status": "safe"|"needs_help"|"critical", "urgency_score": 0-100, "emergency_type": string|null,
+ "needs": string[], "location_in_home": string|null, "notes": "one or two sentences"}
+critical = immediate danger to life (trapped, injured, rising water inside, fire, gas, can't breathe).
+needs_help = not in immediate danger but needs supplies, shelter, power, medication, or transport.`,
+    `Person context: ${JSON.stringify(ctx).slice(0, 3000)}\n\nConversation:\n${transcript.slice(0, 6000)}`,
+    validateTriage,
+  );
+  const result = llm ?? heuristicTriage(userText);
+  if (danger.danger) {
+    result.status = "critical";
+    result.urgency_score = Math.max(result.urgency_score, 90);
+    result.notes = `[danger keywords: ${danger.matched.join(", ")}] ${result.notes}`.trim();
+  }
+  await logAgent({
+    alertId, personId, agent: "triage", tool: "update_triage",
+    thought: `${llm ? "Extracted" : "Heuristic"} triage → ${result.status} (${result.urgency_score})${danger.danger ? " — SAFETY OVERRIDE" : ""}`,
+    input: { userText: userText.slice(0, 500) },
+    output: result,
+  });
+  return result;
+}
+
+// ---------- text composition (remembers the call) ----------
+/** Quote the most informative thing the person said on a previous call/text, if any. */
+function lastUserStatement(ctx: Row): { text: string; channel: string } | null {
+  const msgs = ctxHistory(ctx).filter((m) => (m.role ?? m.speaker) === "user" && (m.content ?? m.text));
+  if (!msgs.length) return null;
+  const best = [...msgs].reverse().find((m) => String(m.content ?? m.text).length > 12) ?? msgs[msgs.length - 1];
+  return { text: String(best.content ?? best.text), channel: String(best.channel ?? "call") };
+}
+
+export async function composeOutreachText(ctx: Row, alertId: Id, personId: Id): Promise<string> {
+  const prior = lastUserStatement(ctx);
+  const event = ctxEventType(ctx);
+  const llm = await chatText(
+    `You write ONE SMS (max 300 chars) from the State Farm SafeNet assistant to a policyholder during a ${event}.
+If there was a previous call, reference what they said on it specifically ("On our call you said ...") and ask if it's still true.
+Otherwise ask: are you and everyone in your home safe right now? Always end with: "If you're in immediate danger, call 911."
+Output only the SMS text.`,
+    `Name: ${ctxName(ctx)}\nPrevious conversation: ${JSON.stringify(ctxHistory(ctx)).slice(0, 3000)}`,
+  );
+  const valid = llm && llm.length <= 480 && /911/.test(llm) && (!prior || /call|said|told/i.test(llm));
+  const text = valid
+    ? llm!
+    : prior
+      ? `State Farm SafeNet: On our ${prior.channel === "sms" ? "last text" : "call"} you said "${prior.text.slice(0, 120)}". Is that still the case? Reply SAFE if you're okay or HELP if you need assistance. If you're in immediate danger, call 911.`
+      : `State Farm SafeNet: we're checking on you during the ${event}. Are you and everyone in your home safe right now? Reply SAFE or HELP. If you're in immediate danger, call 911.`;
+  await logAgent({
+    alertId, personId, agent: "triage", tool: "compose_text",
+    thought: valid ? "Composed follow-up text with Nemotron" : "Using template text" + (prior ? " referencing prior call" : ""),
+    output: { text },
+  });
+  return text;
+}
+
+export async function composeReply(ctx: Row, triage: TriageFields): Promise<string> {
+  if (triage.status === "critical") return `${EMERGENCY_LINE} We've also flagged your case for emergency responders.`;
+  if (triage.status === "safe") return "Thank you — glad you're safe. We'll keep checking in. If anything changes, reply HELP or call 911.";
+  const needs = triage.needs.length ? ` (${triage.needs.join(", ")})` : "";
+  return `Thank you. We've logged that you need help${needs} and a State Farm responder will follow up. If you're in immediate danger, call 911.`;
+}
