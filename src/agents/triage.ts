@@ -19,7 +19,8 @@ export async function generateCallScript(ctx: Row, alertId: Id, personId: Id): P
     `You write follow-up questions for a State Farm disaster check-in phone call.
 The call already asks these fixed questions first: ${CORE_QUESTIONS.join(" | ")}
 Write 2-3 SHORT, plain-language follow-up questions tailored to this person (household, medical needs, pets,
-SafeRoom, location, prior answers). Never repeat the fixed questions. JSON: {"questions": ["..."]}`,
+SafeRoom, location, prior answers). Only ask about things in the profile (no pets unless pets are listed).
+Never repeat the fixed questions. JSON: {"questions": ["..."]}`,
     JSON.stringify(ctx).slice(0, 6000),
     (x: any) => (isStrArray(x?.questions, 3) ? (x.questions as string[]) : null),
   );
@@ -29,7 +30,7 @@ SafeRoom, location, prior answers). Never repeat the fixed questions. JSON: {"qu
   const script: CallScript = {
     opening: `Hi ${ctxName(ctx)}, this is the State Farm SafeNet assistant calling about the ${event} in your area. I have a few quick safety questions.`,
     questions: [...CORE_QUESTIONS, ...followups],
-    closing: `Thank you. If anything changes or you are in danger, call 911. We'll follow up by text.`,
+    closing: `Thank you. If anything changes or you are in danger, call 911. A State Farm responder will follow up.`,
     source,
   };
   await logAgent({

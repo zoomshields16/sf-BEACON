@@ -30,6 +30,7 @@ export const dropCallSession = (attemptId: Id) => sessions.delete(String(attempt
 const MAX_FOLLOWUPS = 3;
 const ACK_TIMEOUT_MS = Number(process.env.VOICE_ACK_TIMEOUT_MS ?? 1500);
 const TURN_TIMEOUT_MS = Number(process.env.VOICE_TURN_TIMEOUT_MS ?? 3500);
+const DANGER_TIMEOUT_MS = Number(process.env.VOICE_DANGER_TIMEOUT_MS ?? 2000);
 
 const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T | null> =>
   Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))]);
@@ -66,17 +67,40 @@ export class CallBrain {
   async reply(transcript: Turn[]): Promise<BrainReply> {
     const lastUser = [...transcript].reverse().find((t) => t.role === "user")?.content ?? "";
 
-    // (2) Danger always wins.
-    const danger = detectDanger(lastUser);
-    if (danger.danger) {
-      if (!this.dangerHandled) {
-        this.dangerHandled = true;
-        this.log(`DANGER on live call [${danger.matched.join(", ")}] — giving 911 instruction and escalating`, { lastUser });
-        await this.onDanger?.(lastUser, danger.matched).catch((e) => console.error("onDanger", e));
-      }
-      return { say: `${EMERGENCY_LINE} I'm alerting emergency responders to your address right now.`, endCall: true };
-    }
+    // (2) Danger always wins — keyword scan (instant) OR Nemotron danger check (run in parallel with the reply).
+    const keyword = detectDanger(lastUser);
+    if (keyword.danger) return this.emergency(lastUser, keyword.matched);
 
+    const [modelDanger, normal] = await Promise.all([
+      lastUser ? withTimeout(this.modelDanger(transcript), DANGER_TIMEOUT_MS) : Promise.resolve(null),
+      this.normalReply(transcript),
+    ]);
+    if (modelDanger?.danger) return this.emergency(lastUser, [`nemotron: ${modelDanger.reason}`]);
+    return normal;
+  }
+
+  private async emergency(lastUser: string, matched: string[]): Promise<BrainReply> {
+    if (!this.dangerHandled) {
+      this.dangerHandled = true;
+      this.log(`DANGER on live call [${matched.join(", ")}] — giving 911 instruction and escalating`, { lastUser });
+      await this.onDanger?.(lastUser, matched).catch((e) => console.error("onDanger", e));
+    }
+    return { say: `${EMERGENCY_LINE} I'm alerting emergency responders to your address right now.`, endCall: true };
+  }
+
+  private modelDanger(transcript: Turn[]) {
+    return chatJSON(
+      `You are a safety monitor on a live disaster check-in call. Decide if the caller's LAST message describes IMMEDIATE
+danger to someone's life right now: trapped, unconscious/unresponsive, not breathing, severe bleeding, collapse,
+chest pain/stroke, rising water inside, fire, gas leak, structure collapse, or asking for emergency help.
+Property damage, power outages, or problems that are already resolved are NOT immediate danger.
+JSON: {"danger": boolean, "reason": "max 8 words"}`,
+      transcriptText(transcript.slice(-4)),
+      (x: any) => (typeof x?.danger === "boolean" ? { danger: x.danger as boolean, reason: String(x.reason ?? "") } : null),
+    );
+  }
+
+  private async normalReply(transcript: Turn[]): Promise<BrainReply> {
     // (1) Fixed safety questions, verbatim, with a short Nemotron acknowledgement.
     if (this.coreIdx < CORE_QUESTIONS.length) {
       const q = CORE_QUESTIONS[this.coreIdx++];
@@ -93,7 +117,7 @@ export class CallBrain {
           `You are the State Farm SafeNet assistant on a LIVE phone call with a policyholder during a disaster.
 The fixed safety questions are done. Now ask at most ${MAX_FOLLOWUPS - this.followups} more short follow-up question(s), ONE per turn,
 responding naturally to what they just said. Planned follow-ups (use, adapt, or skip): ${JSON.stringify(planned)}.
-Rules: under 30 words, warm and calm, no medical/legal/claims advice (say a State Farm agent will follow up on claims).
+Rules: under 30 words, warm and calm, never promise that help or responders are coming, no medical/legal/claims advice (say a State Farm agent will follow up on claims).
 If you have what responders need, set done=true and say a brief thank-you.
 JSON: {"say": "...", "done": boolean}`,
           `Caller profile: ${profileSummary(this.s.ctx)}\n\nCall so far:\n${transcriptText(transcript).slice(-4000)}`,
@@ -124,7 +148,7 @@ JSON: {"say": "...", "done": boolean}`,
     const r = await withTimeout(
       chatJSON(
         `You are on a live disaster check-in call. Write a very short, calm acknowledgement (max 12 words) of what the
-caller just said. Do NOT ask a question. JSON: {"ack": "..."}`,
+caller just said. Do NOT ask a question. Never promise that help is coming. JSON: {"ack": "..."}`,
         transcriptText(transcript.slice(-4)),
         (x: any) => (typeof x?.ack === "string" && x.ack.length < 120 && !x.ack.includes("?") ? (x.ack as string) : null),
       ),

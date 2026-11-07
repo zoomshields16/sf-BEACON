@@ -21,6 +21,10 @@ function getClient() {
 const withPrefix = (system: string) =>
   process.env.NEMOTRON_SYSTEM_PREFIX ? `${process.env.NEMOTRON_SYSTEM_PREFIX}\n${system}` : system;
 
+// Nemotron 3.5 reasons by default (seconds per reply). Off everywhere for latency; the coordinator can opt in
+// with NEMOTRON_COORDINATOR_THINKING=true (its reasoning then shows up in the agent log).
+const thinking = (on: boolean) => ({ chat_template_kwargs: { enable_thinking: on } }) as Record<string, unknown>;
+
 /** Pulls the first JSON object out of model text (strips <think> blocks and code fences). */
 export function extractJson(text: string): unknown {
   const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/```(json)?/g, "");
@@ -46,6 +50,7 @@ export async function chatJSON<T>(
       model: process.env.NEMOTRON_MODEL!,
       temperature: 0.2,
       max_tokens: 1024,
+      ...thinking(false),
       messages: [
         { role: "system", content: withPrefix(system + "\nRespond with a single JSON object only.") },
         { role: "user", content: user },
@@ -66,6 +71,7 @@ export async function chatText(system: string, user: string): Promise<string | n
       model: process.env.NEMOTRON_MODEL!,
       temperature: 0.3,
       max_tokens: 400,
+      ...thinking(false),
       messages: [
         { role: "system", content: withPrefix(system) },
         { role: "user", content: user },
@@ -116,13 +122,15 @@ export async function runAgent(opts: {
     { role: "user", content: opts.task },
   ];
   let toolCalls = 0;
+  const coordinatorThinking = agent === "coordinator" && process.env.NEMOTRON_COORDINATOR_THINKING === "true";
 
   try {
     for (let step = 0; step < maxSteps; step++) {
       const res = await getClient().chat.completions.create({
         model: process.env.NEMOTRON_MODEL!,
         temperature: 0.2,
-        max_tokens: 1024,
+        max_tokens: coordinatorThinking ? 4096 : 1024,
+        ...thinking(coordinatorThinking),
         messages,
         tools: toolSpecs,
         tool_choice: "auto",
@@ -130,7 +138,8 @@ export async function runAgent(opts: {
       const msg = res.choices[0]?.message;
       if (!msg) break;
       messages.push(msg);
-      const thought = (msg.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+      const reasoning = String((msg as any).reasoning_content ?? (msg as any).reasoning ?? "").trim();
+      const thought = ((msg.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim() || reasoning.slice(-400)).trim();
 
       if (!msg.tool_calls?.length) {
         await logAgent({ alertId, agent, thought: thought || "(done)" });
