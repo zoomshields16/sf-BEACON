@@ -70,3 +70,12 @@ export function detectDanger(userText: string): { danger: boolean; matched: stri
   const matched = DANGER_PATTERNS.filter(([, re]) => re.test(userText)).map(([k]) => k);
   return { danger: matched.length > 0, matched };
 }
+
+// The agent must never imply rescue is coming — only a human responder can promise that.
+const FALSE_PROMISES = /\s*[^.!?]*\b(help is (on (the|its) way|coming)|until help arrives|(responders|rescuers|someone|help|they)('s| is| are| will be)? (on (the|their|its) way|coming to you|being sent|be there soon)|we('re| are| will be)? (sending|dispatching) (help|someone|responders)|help will (arrive|be there))\b[^.!?]*[.!?]?/gi;
+
+/** Removes any sentence that promises help is coming. Falls back to a neutral line if nothing is left. */
+export function stripFalsePromises(text: string): string {
+  const cleaned = text.replace(FALSE_PROMISES, "").replace(/\s{2,}/g, " ").trim();
+  return cleaned || "Thank you.";
+}

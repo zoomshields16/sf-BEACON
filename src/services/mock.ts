@@ -54,7 +54,7 @@ export function simulateCall(i: PlaceCallInput): { externalId: string } {
     if (s.kind === "no_answer") return handleCallEnded({ externalId, answered: false, transcript: [] });
 
     const brain = new CallBrain(
-      { alertId: i.alertId, personId: i.personId, attemptId: i.attemptId, ctx: i.ctx, script: i.script },
+      { alertId: i.alertId, personId: i.personId, attemptId: i.attemptId, ctx: i.ctx, script: i.script, simulated: true },
       (text, matched) => markCriticalNow(i.alertId, i.personId, text, matched),
     );
     const transcript: Turn[] = [];

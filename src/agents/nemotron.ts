@@ -25,6 +25,44 @@ const withPrefix = (system: string) =>
 // with NEMOTRON_COORDINATOR_THINKING=true (its reasoning then shows up in the agent log).
 const thinking = (on: boolean) => ({ chat_template_kwargs: { enable_thinking: on } }) as Record<string, unknown>;
 
+// ---------- request queue: bounded concurrency, priority lanes, retry on 429 ----------
+// "high" = a real phone call (someone is waiting on the line), "normal" = coordinator/triage, "low" = simulated calls.
+export type Priority = "high" | "normal" | "low";
+const RANK: Record<Priority, number> = { high: 0, normal: 1, low: 2 };
+const MAX_CONCURRENCY = Number(process.env.NEMOTRON_MAX_CONCURRENCY ?? 3);
+let active = 0;
+const waiting: { rank: number; go: () => void }[] = [];
+
+async function acquire(priority: Priority) {
+  if (active < MAX_CONCURRENCY && waiting.length === 0) { active++; return; }
+  await new Promise<void>((go) => {
+    waiting.push({ rank: RANK[priority], go });
+    waiting.sort((a, b) => a.rank - b.rank);
+  });
+  active++;
+}
+function release() {
+  active--;
+  waiting.shift()?.go();
+}
+
+type CreateParams = Parameters<OpenAI["chat"]["completions"]["create"]>[0];
+async function create(params: CreateParams, priority: Priority = "normal"): Promise<OpenAI.Chat.Completions.ChatCompletion> {
+  await acquire(priority);
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return (await getClient().chat.completions.create({ ...params, stream: false } as any)) as OpenAI.Chat.Completions.ChatCompletion;
+      } catch (err: any) {
+        if (err?.status !== 429 || attempt >= 2 || priority === "low") throw err;
+        await new Promise((r) => setTimeout(r, 300 * (attempt + 1) + Math.random() * 200));
+      }
+    }
+  } finally {
+    release();
+  }
+}
+
 /** Pulls the first JSON object out of model text (strips <think> blocks and code fences). */
 export function extractJson(text: string): unknown {
   const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/```(json)?/g, "");
@@ -43,10 +81,11 @@ export async function chatJSON<T>(
   system: string,
   user: string,
   validate: (x: unknown) => T | null,
+  priority: Priority = "normal",
 ): Promise<T | null> {
   if (!nemotronEnabled()) return null;
   try {
-    const res = await getClient().chat.completions.create({
+    const res = await create({
       model: process.env.NEMOTRON_MODEL!,
       temperature: 0.2,
       max_tokens: 1024,
@@ -55,7 +94,7 @@ export async function chatJSON<T>(
         { role: "system", content: withPrefix(system + "\nRespond with a single JSON object only.") },
         { role: "user", content: user },
       ],
-    });
+    }, priority);
     return validate(extractJson(res.choices[0]?.message?.content ?? ""));
   } catch (err) {
     console.error("nemotron chatJSON error:", (err as Error).message);
@@ -64,10 +103,10 @@ export async function chatJSON<T>(
 }
 
 /** Plain text completion; null on error. */
-export async function chatText(system: string, user: string): Promise<string | null> {
+export async function chatText(system: string, user: string, priority: Priority = "normal"): Promise<string | null> {
   if (!nemotronEnabled()) return null;
   try {
-    const res = await getClient().chat.completions.create({
+    const res = await create({
       model: process.env.NEMOTRON_MODEL!,
       temperature: 0.3,
       max_tokens: 400,
@@ -76,7 +115,7 @@ export async function chatText(system: string, user: string): Promise<string | n
         { role: "system", content: withPrefix(system) },
         { role: "user", content: user },
       ],
-    });
+    }, priority);
     const text = (res.choices[0]?.message?.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
     return text || null;
   } catch (err) {
@@ -109,9 +148,13 @@ export async function runAgent(opts: {
   task: string;
   tools: ToolDef[];
   maxSteps?: number;
-}): Promise<{ ok: boolean; final: string | null; toolCalls: number }> {
+  /** If the model tries to finish without calling any of these, nudge it once to actually act. */
+  mustCallOneOf?: string[];
+}): Promise<{ ok: boolean; final: string | null; toolCalls: number; called: string[] }> {
   const { agent, alertId, tools, maxSteps = 10 } = opts;
-  if (!nemotronEnabled()) return { ok: false, final: null, toolCalls: 0 };
+  const called: string[] = [];
+  let nudged = false;
+  if (!nemotronEnabled()) return { ok: false, final: null, toolCalls: 0, called };
 
   const toolSpecs: ChatCompletionTool[] = tools.map((t) => ({
     type: "function",
@@ -126,7 +169,7 @@ export async function runAgent(opts: {
 
   try {
     for (let step = 0; step < maxSteps; step++) {
-      const res = await getClient().chat.completions.create({
+      const res = await create({
         model: process.env.NEMOTRON_MODEL!,
         temperature: 0.2,
         max_tokens: coordinatorThinking ? 4096 : 1024,
@@ -142,8 +185,14 @@ export async function runAgent(opts: {
       const thought = ((msg.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim() || reasoning.slice(-400)).trim();
 
       if (!msg.tool_calls?.length) {
+        const acted = !opts.mustCallOneOf || called.some((c) => opts.mustCallOneOf!.includes(c));
+        if (!acted && !nudged) {
+          nudged = true;
+          messages.push({ role: "user", content: `You described a plan but haven't acted. Call ${opts.mustCallOneOf!.join(" or ")} now for each person you chose.` });
+          continue;
+        }
         await logAgent({ alertId, agent, thought: thought || "(done)" });
-        return { ok: true, final: thought, toolCalls };
+        return { ok: true, final: thought, toolCalls, called };
       }
 
       for (const call of msg.tool_calls) {
@@ -158,6 +207,7 @@ export async function runAgent(opts: {
           output = { error: (err as Error).message };
         }
         toolCalls++;
+        called.push(call.function.name);
         await logAgent({
           alertId,
           personId: args?.person_id ?? null,
@@ -171,9 +221,9 @@ export async function runAgent(opts: {
       }
     }
     await logAgent({ alertId, agent, thought: `stopped after ${maxSteps} steps` });
-    return { ok: true, final: null, toolCalls };
+    return { ok: true, final: null, toolCalls, called };
   } catch (err) {
     await logAgent({ alertId, agent, thought: `Nemotron error, using fallback: ${(err as Error).message}` });
-    return { ok: false, final: null, toolCalls };
+    return { ok: false, final: null, toolCalls, called };
   }
 }

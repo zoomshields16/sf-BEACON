@@ -5,8 +5,8 @@
 //   1. The 3 fixed safety questions are always asked first, verbatim.
 //   2. Every user turn is keyword-scanned; danger → 911 line, end call, mark critical + escalate mid-call.
 //   3. If Nemotron is slow or returns junk, we speak the next scripted question instead.
-import { chatJSON } from "../agents/nemotron.js";
-import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger } from "../agents/safety.js";
+import { chatJSON, type Priority } from "../agents/nemotron.js";
+import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger, stripFalsePromises } from "../agents/safety.js";
 import type { CallScript } from "../agents/triage.js";
 import { ctxEventType, ctxName, logAgent, type Id, type Row } from "../repo.js";
 
@@ -19,6 +19,8 @@ export interface CallSession {
   attemptId: Id | null;
   ctx: Row;
   script: CallScript;
+  /** true for mock calls — their Nemotron requests yield to real calls. */
+  simulated?: boolean;
 }
 
 // attemptId → session, registered by the pipeline right before a call is placed.
@@ -28,10 +30,13 @@ export const getCallSession = (attemptId: Id) => sessions.get(String(attemptId))
 export const dropCallSession = (attemptId: Id) => sessions.delete(String(attemptId));
 
 const MAX_FOLLOWUPS = 3;
+const DANGER_RULE = `Also set danger=true ONLY if the caller's LAST message describes IMMEDIATE danger to life right now:
+trapped, unconscious/unresponsive, not breathing, severe bleeding, collapse, chest pain/stroke, rising water inside,
+fire, gas leak, structure collapse, life-support equipment about to fail, or asking for emergency help.
+Property damage, outages, or problems already resolved are NOT immediate danger.`;
 const NON_ANSWER = /^(hello|hi|hey|yes\?|what|huh|sorry|pardon|who is this|who's this|who is calling|can you repeat( that)?|say that again)[\s?.!,]*$/i;
 const ACK_TIMEOUT_MS = Number(process.env.VOICE_ACK_TIMEOUT_MS ?? 1500);
 const TURN_TIMEOUT_MS = Number(process.env.VOICE_TURN_TIMEOUT_MS ?? 3500);
-const DANGER_TIMEOUT_MS = Number(process.env.VOICE_DANGER_TIMEOUT_MS ?? 2000);
 
 const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T | null> =>
   Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))]);
@@ -68,16 +73,13 @@ export class CallBrain {
   async reply(transcript: Turn[]): Promise<BrainReply> {
     const lastUser = [...transcript].reverse().find((t) => t.role === "user")?.content ?? "";
 
-    // (2) Danger always wins — keyword scan (instant) OR Nemotron danger check (run in parallel with the reply).
+    // (2) Danger always wins: instant keyword scan first, then Nemotron's danger flag on the same request as the reply.
     const keyword = detectDanger(lastUser);
     if (keyword.danger) return this.emergency(lastUser, keyword.matched);
 
-    const [modelDanger, normal] = await Promise.all([
-      lastUser ? withTimeout(this.modelDanger(transcript), DANGER_TIMEOUT_MS) : Promise.resolve(null),
-      this.normalReply(transcript),
-    ]);
-    if (modelDanger?.danger) return this.emergency(lastUser, [`nemotron: ${modelDanger.reason}`]);
-    return normal;
+    const { reply, danger } = await this.normalReply(transcript);
+    if (danger) return this.emergency(lastUser, [`nemotron: ${danger}`]);
+    return reply;
   }
 
   private async emergency(lastUser: string, matched: string[]): Promise<BrainReply> {
@@ -89,31 +91,24 @@ export class CallBrain {
     return { say: `${EMERGENCY_LINE} I'm alerting emergency responders to your address right now.`, endCall: true };
   }
 
-  private modelDanger(transcript: Turn[]) {
-    return chatJSON(
-      `You are a safety monitor on a live disaster check-in call. Decide if the caller's LAST message describes IMMEDIATE
-danger to someone's life right now: trapped, unconscious/unresponsive, not breathing, severe bleeding, collapse,
-chest pain/stroke, rising water inside, fire, gas leak, structure collapse, or asking for emergency help.
-Property damage, power outages, or problems that are already resolved are NOT immediate danger.
-JSON: {"danger": boolean, "reason": "max 8 words"}`,
-      transcriptText(transcript.slice(-4)),
-      (x: any) => (typeof x?.danger === "boolean" ? { danger: x.danger as boolean, reason: String(x.reason ?? "") } : null),
-    );
+  /** Real calls jump the Nemotron queue; simulated calls wait. */
+  private get priority(): Priority {
+    return this.s.simulated ? "low" : "high";
   }
 
-  private async normalReply(transcript: Turn[]): Promise<BrainReply> {
+  private async normalReply(transcript: Turn[]): Promise<{ reply: BrainReply; danger?: string }> {
     // Greetings / confusion aren't answers — re-introduce and repeat the current question.
     const lastUser = [...transcript].reverse().find((t) => t.role === "user")?.content.trim() ?? "";
     if (NON_ANSWER.test(lastUser) && this.lastAsked) {
-      return { say: `This is the State Farm SafeNet assistant, checking on your safety. ${this.lastAsked}`, endCall: false };
+      return { reply: { say: `This is the State Farm SafeNet assistant, checking on your safety. ${this.lastAsked}`, endCall: false } };
     }
 
     // (1) Fixed safety questions, verbatim, with a short Nemotron acknowledgement.
     if (this.coreIdx < CORE_QUESTIONS.length) {
       const q = CORE_QUESTIONS[this.coreIdx++];
-      const ack = await this.ack(transcript);
+      const r = await this.ack(transcript);
       this.lastAsked = q;
-      return { say: `${ack} ${q}`, endCall: false };
+      return { reply: { say: `${r?.ack ?? "Thank you."} ${q}`, endCall: false }, danger: r?.danger };
     }
 
     // Follow-up phase: Nemotron leads, bounded by MAX_FOLLOWUPS.
@@ -126,42 +121,51 @@ The fixed safety questions are done. Now ask at most ${MAX_FOLLOWUPS - this.foll
 responding naturally to what they just said. Planned follow-ups (use, adapt, or skip): ${JSON.stringify(planned)}.
 Rules: under 30 words, warm and calm, never promise that help or responders are coming, no medical/legal/claims advice (say a State Farm agent will follow up on claims).
 If you have what responders need, set done=true and say a brief thank-you.
-JSON: {"say": "...", "done": boolean}`,
+${DANGER_RULE}
+JSON: {"say": "...", "done": boolean, "danger": boolean, "danger_reason": "max 8 words"}`,
           `Caller profile: ${profileSummary(this.s.ctx)}\n\nCall so far:\n${transcriptText(transcript).slice(-4000)}`,
           (x: any) => (typeof x?.say === "string" && x.say.length > 0 && x.say.length < 400 && typeof x?.done === "boolean" ? x : null),
+          this.priority,
         ),
         TURN_TIMEOUT_MS,
       );
       if (llm) {
+        const danger = llm.danger === true ? String(llm.danger_reason ?? "immediate danger") : undefined;
+        if (danger) return { reply: { say: "", endCall: true }, danger };
+        llm.say = stripFalsePromises(llm.say);
         this.log(llm.done ? "Nemotron: enough information — wrapping up" : "Nemotron chose next follow-up", { say: llm.say });
-        if (llm.done) return { say: `${llm.say} ${this.s.script.closing}`, endCall: true };
+        if (llm.done) return { reply: { say: `${llm.say} ${this.s.script.closing}`, endCall: true } };
         this.followups++;
         this.lastAsked = llm.say;
-        return { say: llm.say, endCall: false };
+        return { reply: { say: llm.say, endCall: false } };
       }
       // (3) Fallback: next scripted question.
       const next = planned[this.followups++];
       if (next) {
         this.log("Nemotron slow/unavailable — using scripted follow-up", { say: next });
         this.lastAsked = next;
-        return { say: `Thank you. ${next}`, endCall: false };
+        return { reply: { say: `Thank you. ${next}`, endCall: false } };
       }
     }
 
-    return { say: this.s.script.closing, endCall: true };
+    return { reply: { say: this.s.script.closing, endCall: true } };
   }
 
-  private async ack(transcript: Turn[]): Promise<string> {
-    const r = await withTimeout(
+  private ack(transcript: Turn[]): Promise<{ ack: string; danger?: string } | null> {
+    return withTimeout(
       chatJSON(
         `You are on a live disaster check-in call. Write a very short, calm acknowledgement (max 12 words) of what the
-caller just said. Do NOT ask a question. Never promise that help is coming. JSON: {"ack": "..."}`,
+caller just said. Do NOT ask a question. Never promise that help is coming.
+${DANGER_RULE}
+JSON: {"ack": "...", "danger": boolean, "danger_reason": "max 8 words"}`,
         transcriptText(transcript.slice(-4)),
-        (x: any) => (typeof x?.ack === "string" && x.ack.length < 120 && !x.ack.includes("?") ? (x.ack as string) : null),
+        (x: any) => (typeof x?.ack === "string" && x.ack.length < 120 && !x.ack.includes("?")
+          ? { ack: stripFalsePromises(x.ack as string), danger: x.danger === true ? String(x.danger_reason ?? "immediate danger") : undefined }
+          : null),
+        this.priority,
       ),
       ACK_TIMEOUT_MS,
     );
-    return r ?? "Thank you.";
   }
 
   private log(thought: string, output?: unknown) {

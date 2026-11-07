@@ -16,7 +16,8 @@ Each round:
    Prefer people in high-risk hexagons, elderly/medical-needs households, and people never reached.
 3. Do not contact anyone whose attempt is already in progress.
 4. If get_call_result shows a life-threatening situation that has no escalation yet, call escalate_to_911.
-Keep each thought to one short sentence. When the round's contacts are started, reply with a one-sentence summary.`;
+Refer to people by name (never assume gender). Don't stop to summarize until the calls are placed.
+Before EVERY tool call, write one short sentence in your message explaining why (e.g. "Maria is 81 on oxygen in a flooded hex — calling her first."). When the round's contacts are started, reply with a one-sentence summary.`;
 
 /** Top-risk hexes as a signature, so we can notice when the risk picture changes. */
 async function hotHexSignature(alertId: Id) {
@@ -58,10 +59,12 @@ export async function coordinatorRound(alertId: Id) {
       system: SYSTEM,
       task: `Alert ${alertId}. Start contact with up to ${BATCH} people this round.${changed ? " Risk hotspots just changed — check get_hex_risk first and prioritize those areas." : ""}`,
       tools: COORDINATOR_TOOLS,
-      maxSteps: BATCH * 2 + 4,
+      maxSteps: BATCH * 3 + 4,
+      mustCallOneOf: ["place_voice_call", "send_text"],
     });
-    if (!r.ok || r.toolCalls === 0) await fallbackRound(alertId);
-    return { skipped: false, nemotron: r.ok && r.toolCalls > 0, summary: r.final };
+    const contacted = r.called.some((c) => c === "place_voice_call" || c === "send_text");
+    if (!r.ok || !contacted) await fallbackRound(alertId);
+    return { skipped: false, nemotron: r.ok && contacted, summary: r.final };
   } finally {
     running.delete(k);
   }

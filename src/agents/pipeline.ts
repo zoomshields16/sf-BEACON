@@ -111,7 +111,7 @@ export async function handleCallEnded(r: CallResult) {
   clearInFlight(alertId, personId);
   await finishAttempt(attemptId, r.answered ? "completed" : "no_answer");
   if (!r.answered) {
-    await logAgent({ alertId, personId, agent: "coordinator", tool: "get_call_result", thought: "No answer — will retry; switches to text after 2 attempts" });
+    await logAgent({ alertId, personId, agent: "coordinator", tool: "get_call_result", thought: "No answer — will retry (marked exhausted after 4 attempts)" });
     return;
   }
 

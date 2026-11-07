@@ -15,8 +15,16 @@ export interface PlaceCallInput {
   ctx: Row;
 }
 
+/** Only numbers in LIVE_CALL_ALLOWLIST (comma-separated) ever get a real call; 555 numbers never do. */
+export function isLiveDialable(phone: string): boolean {
+  const digits = (p: string) => p.replace(/\D/g, "").slice(-10);
+  const allow = (process.env.LIVE_CALL_ALLOWLIST ?? "").split(",").map((s) => s.trim()).filter(Boolean).map(digits);
+  return allow.includes(digits(phone)) && !/^555/.test(digits(phone).slice(3));
+}
+
 export async function placeVoiceCall(i: PlaceCallInput): Promise<{ externalId: string }> {
-  if (process.env.MOCK_CALLS === "true") return simulateCall(i);
+  // Hybrid demo: real calls to allowlisted team phones, simulated calls (same Nemotron brain) for everyone else.
+  if (process.env.MOCK_CALLS === "true" || !isLiveDialable(i.toPhone)) return simulateCall(i);
 
   const { LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_SIP_TRUNK_ID, PHOTON_PHONE_NUMBER } = process.env;
   if (!LIVEKIT_URL || !LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_SIP_TRUNK_ID) {
