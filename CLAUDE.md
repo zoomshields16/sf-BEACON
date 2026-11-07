@@ -19,7 +19,9 @@ over polish.
   `https://integrate.api.nvidia.com/v1`). Model name comes from env `NEMOTRON_MODEL`; pick a Nemotron
   model on build.nvidia.com that supports function calling.
 - Photon 2.0 (TypeScript SDK "spectrum-ts", docs: https://photon.codes/docs/spectrum-ts/introduction).
-  Voice runs on a Photon SMS number connected over SIP to Retell. Texts go out on the same number.
+  Voice: Photon number ⇄ SIP ⇄ LiveKit Cloud; a LiveKit agent (`src/voice/agent.ts`) runs the call with
+  **Nemotron as the live brain** (`src/voice/brain.ts`), LiveKit Inference for STT/TTS. Texts go out on the same number.
+  Nemotron: hosted API first; Brev-hosted NIM via `NEMOTRON_BASE_URL` if latency/rate limits bite. Setup: `docs/voice-setup.md`.
 - Frontend (later): React + Vite + Leaflet map, polling the API every 2–3 s.
 
 ## Database (already written, tested; do not rewrite without asking)
@@ -56,7 +58,7 @@ Tools (TypeScript functions exposed via function calling): `get_call_queue`, `ge
 
 ## Conventions
 - All secrets in `.env` (never commit): `DATABASE_URL`, `NVIDIA_API_KEY`, `NEMOTRON_MODEL`,
-  `PHOTON_API_KEY`, `PHOTON_PHONE_NUMBER`, `RETELL_API_KEY`, `PUBLIC_BASE_URL` (ngrok URL for webhooks). Keep `.env.example` updated.
+  `PHOTON_PROJECT_ID`, `PHOTON_PROJECT_SECRET`, `PHOTON_PHONE_NUMBER`, `LIVEKIT_*`. Keep `.env.example` updated.
 - Parameterized SQL only (`$1, $2`); no string-built queries.
 - Each external service gets one wrapper module in `src/services/` so it can be mocked; support `MOCK_CALLS=true` to simulate calls/transcripts when the real voice line isn't available (needed for demo backup).
 - Small commits with clear messages. Run `npm run typecheck` before saying a task is done.
@@ -69,6 +71,7 @@ src/
   db.ts             pg Pool
   routes/           alerts.ts, dashboard.ts, webhooks.ts
   agents/           coordinator.ts, triage.ts, escalation.ts, tools.ts, nemotron.ts
-  services/         photon.ts, retell.ts, nws.ts
+  services/         photon.ts, livekit.ts, mock.ts
+  voice/            brain.ts (Nemotron call brain), agent.ts (LiveKit worker)
 web/                React dashboard (later)
 ```

@@ -15,7 +15,7 @@ Before pushing: `npm run typecheck`.
 
 ## How it flows
 `POST /api/alerts/:id/activate` → coordinator (Nemotron tool loop, rule-based fallback) pulls `call_queue` every 15 s →
-voice call (Retell, or mock) with a script = 3 fixed safety questions + generated follow-ups → `call_ended` webhook →
+voice call (Photon → LiveKit, Nemotron drives the conversation; or mock) with a script = 3 fixed safety questions + generated follow-ups → call ends →
 triage extraction (+ keyword safety override → `critical`) → escalation to `escalations` (`pending_review`) →
 text follow-up that quotes the call. Every step lands in `agent_log`.
 
@@ -34,10 +34,9 @@ text follow-up that quotes the call. Every step lands in `agent_log`.
 | GET | `/api/alerts/:id/people/:pid` | person_context |
 | GET | `/api/alerts/:id/escalations` | |
 | POST | `/api/escalations/:id/confirm` · `/dismiss` | human review |
-| POST | `/webhooks/retell` | Retell `call_ended` |
 | POST | `/webhooks/sms` | inbound text `{from, text}` |
 
-Retell setup: `docs/retell-agent-prompt.md`. **Table column names are assumed in `src/repo.ts`** — fix there once `db/` lands.
+Voice setup: `docs/voice-setup.md` (run `npm run agent` alongside `npm run dev`). **Table column names are assumed in `src/repo.ts`** — fix there once `db/` lands.
 
 ## Dashboard
 ```bash

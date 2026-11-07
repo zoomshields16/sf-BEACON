@@ -1,8 +1,9 @@
-// The contact lifecycle: reach out → result arrives (webhook or mock) → triage → escalate → follow up.
+// The contact lifecycle: reach out → result arrives (LiveKit agent or mock) → triage → escalate → follow up.
 import { composeOutreachText, composeReply, extractTriage, generateCallScript } from "./triage.js";
 import { maybeEscalate } from "./escalation.js";
 import { EMERGENCY_LINE } from "./safety.js";
-import { placeVoiceCall } from "../services/retell.js";
+import { placeVoiceCall } from "../services/livekit.js";
+import { registerCallSession } from "../voice/brain.js";
 import { sendText } from "../services/photon.js";
 import {
   addMessage, ctxHistory, ctxName, ctxPhone, findAttempt, finishAttempt, getTriage, insertAttempt,
@@ -10,7 +11,7 @@ import {
   type Channel, type Id, type Row, type TriageFields,
 } from "../repo.js";
 
-const IN_FLIGHT_TIMEOUT_MS = 3 * 60_000;
+const IN_FLIGHT_TIMEOUT_MS = 12 * 60_000; // longer than the 10-min max call
 const inFlight = new Map<string, NodeJS.Timeout>();
 const key = (alertId: Id, personId: Id) => `${alertId}:${personId}`;
 
@@ -48,7 +49,8 @@ export async function contactPerson(alertId: Id, personId: Id, channel: Channel)
   try {
     if (channel === "voice") {
       const script = await generateCallScript(ctx, alertId, personId);
-      const { externalId } = await placeVoiceCall({ attemptId, alertId, personId, toPhone: phone, name: ctxName(ctx), script });
+      registerCallSession({ alertId, personId, attemptId, ctx, script });
+      const { externalId } = await placeVoiceCall({ attemptId, alertId, personId, toPhone: phone, name: ctxName(ctx), script, ctx });
       await setAttemptExternalId(attemptId, externalId);
       await logAgent({ alertId, personId, agent: "coordinator", tool: "place_voice_call", thought: `Calling ${ctxName(ctx)}`, output: { attemptId, externalId } });
     } else {
@@ -76,6 +78,17 @@ async function applyTriage(alertId: Id, personId: Id, t: TriageFields) {
   }
   await updateTriage(alertId, personId, t);
   return t;
+}
+
+/** Called the moment danger is heard on a live call — escalate before the call even ends. */
+export async function markCriticalNow(alertId: Id, personId: Id, userText: string, matched: string[]) {
+  const ctx = await personContext(personId, alertId);
+  const t = await applyTriage(alertId, personId, {
+    status: "critical", urgency_score: 95, emergency_type: matched.join(", ") || "unknown",
+    needs: ["emergency response"], location_in_home: null, notes: `Live call: "${userText.slice(0, 300)}"`,
+  });
+  await logAgent({ alertId, personId, agent: "triage", tool: "update_triage", thought: "Live-call danger → critical", output: t });
+  await maybeEscalate(ctx, t, alertId, personId);
 }
 
 export interface CallResult {

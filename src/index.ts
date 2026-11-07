@@ -4,6 +4,7 @@ import { pool } from "./db.js";
 import { alerts } from "./routes/alerts.js";
 import { dashboard } from "./routes/dashboard.js";
 import { webhooks } from "./routes/webhooks.js";
+import { internal } from "./routes/internal.js";
 import { nemotronEnabled } from "./agents/nemotron.js";
 
 const app = express();
@@ -27,6 +28,7 @@ app.get("/health", async (_req, res) => {
 app.use("/api/alerts", alerts);
 app.use("/api", dashboard);
 app.use("/webhooks", webhooks);
+app.use("/internal", internal);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

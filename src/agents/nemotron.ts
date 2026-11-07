@@ -8,7 +8,8 @@ let client: OpenAI | null = null;
 function getClient() {
   client ??= new OpenAI({
     apiKey: process.env.NVIDIA_API_KEY,
-    baseURL: "https://integrate.api.nvidia.com/v1",
+    // Hosted API by default; point at a Nemotron NIM on Brev with NEMOTRON_BASE_URL.
+    baseURL: process.env.NEMOTRON_BASE_URL || "https://integrate.api.nvidia.com/v1",
     timeout: 30_000,
     maxRetries: 1,
   });

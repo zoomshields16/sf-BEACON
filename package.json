@@ -9,21 +9,28 @@
     "typecheck": "tsc --noEmit",
     "db:setup": "psql \"$DATABASE_URL\" -f db/schema.sql -f db/functions.sql -f db/seed.sql",
     "web": "npm --prefix web run dev",
-    "web:install": "npm --prefix web install"
+    "web:install": "npm --prefix web install",
+    "agent": "tsx src/voice/agent.ts dev"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "@livekit/agents": "^1.9.5",
+    "@livekit/agents-plugin-openai": "^1.9.5",
+    "@livekit/agents-plugin-silero": "^1.9.5",
     "dotenv": "^18.0.9",
     "express": "^5.3.0",
+    "livekit-server-sdk": "^2.19.2",
     "openai": "^7.53.0",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "ws": "^8.22.1"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }

@@ -1,7 +1,7 @@
 // MOCK_CALLS=true: fake calls and text replies so the whole pipeline runs without a phone line.
 // Each person gets a stable scenario (hash of their id), so their text reply matches what they "said" on the call.
-import { detectDanger, EMERGENCY_LINE } from "../agents/safety.js";
-import type { PlaceCallInput } from "./retell.js";
+import type { PlaceCallInput } from "./livekit.js";
+import { CallBrain, type Turn } from "../voice/brain.js";
 
 type Kind = "safe" | "needs_help" | "critical" | "no_answer";
 interface Scenario { kind: Kind; weight: number; answers: string[]; textReply: string }
@@ -48,22 +48,22 @@ export function simulateCall(i: PlaceCallInput): { externalId: string } {
   personByPhone.set(i.toPhone, String(i.personId));
   const externalId = `mock-call-${i.attemptId}`;
 
+  // Drive the SAME CallBrain the LiveKit agent uses, with scripted caller answers.
   setTimeout(async () => {
-    const { handleCallEnded } = await import("../agents/pipeline.js");
+    const { handleCallEnded, markCriticalNow } = await import("../agents/pipeline.js");
     if (s.kind === "no_answer") return handleCallEnded({ externalId, answered: false, transcript: [] });
 
-    // Mirror what the Retell agent does live: ask in order; on danger, give the 911 line and end.
-    const transcript: { role: "agent" | "user"; content: string }[] = [{ role: "agent", content: i.script.opening }];
-    for (const [n, q] of i.script.questions.entries()) {
-      const a = s.answers[n] ?? "No, that's everything.";
-      transcript.push({ role: "agent", content: q }, { role: "user", content: a });
-      if (detectDanger(a).danger) {
-        transcript.push({ role: "agent", content: `${EMERGENCY_LINE} I'm also alerting emergency responders now.` });
-        break;
-      }
-    }
-    if (!detectDanger(transcript.map((t) => t.content).join(" ")).danger) {
-      transcript.push({ role: "agent", content: i.script.closing });
+    const brain = new CallBrain(
+      { alertId: i.alertId, personId: i.personId, attemptId: i.attemptId, ctx: i.ctx, script: i.script },
+      (text, matched) => markCriticalNow(i.alertId, i.personId, text, matched),
+    );
+    const transcript: Turn[] = [];
+    let r = brain.opening();
+    transcript.push({ role: "agent", content: r.say });
+    for (let turn = 0; turn < 8 && !r.endCall; turn++) {
+      transcript.push({ role: "user", content: s.answers[turn] ?? "No, that's everything. Thank you." });
+      r = await brain.reply(transcript);
+      transcript.push({ role: "agent", content: r.say });
     }
     await handleCallEnded({ externalId, answered: true, transcript }).catch((e) => console.error("mock call", e));
   }, delay());
