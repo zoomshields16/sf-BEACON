@@ -1,6 +1,6 @@
 // Outbound calls: LiveKit dials the policyholder through the Photon SIP trunk, and once they answer
 // we dispatch the SafeNet agent (src/voice/agent.ts) into the room.
-import { AgentDispatchClient, SipClient } from "livekit-server-sdk";
+import { AgentDispatchClient, RoomServiceClient, SipClient } from "livekit-server-sdk";
 import type { CallScript } from "../agents/triage.js";
 import { logAgent, type Id, type Row } from "../repo.js";
 import { simulateCall } from "./mock.js";
@@ -45,6 +45,8 @@ export async function placeVoiceCall(i: PlaceCallInput): Promise<{ externalId: s
     } catch (err) {
       await logAgent({ alertId: i.alertId, personId: i.personId, agent: "system", tool: "place_voice_call",
                        thought: `Call not connected: ${(err as Error).message}` });
+      // If they already picked up but the agent couldn't join, don't leave them on a dead line.
+      await new RoomServiceClient(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET).deleteRoom(room).catch(() => {});
       const { handleCallEnded } = await import("../agents/pipeline.js");
       await handleCallEnded({ attemptId: i.attemptId, answered: false, transcript: [] });
     }

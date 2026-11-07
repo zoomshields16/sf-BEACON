@@ -9,6 +9,9 @@ import * as openai from "@livekit/agents-plugin-openai";
 import { RoomServiceClient } from "livekit-server-sdk";
 import { CallBrain, type BrainReply, type CallSession, type Turn } from "./brain.js";
 import { CORE_QUESTIONS } from "../agents/safety.js";
+import { SILENCE_REMINDERS, type CallOutcome } from "./cases.js";
+
+const SILENCE_AFTER_S = Number(process.env.VOICE_SILENCE_AFTER_S ?? 10); // quiet this long → "are you still there?"
 
 const API = process.env.INTERNAL_API_URL ?? `http://localhost:${process.env.PORT ?? 3000}`;
 
@@ -57,6 +60,7 @@ class SafeNetCaller extends voice.Agent {
 
   /** Speak via session.say (used for the opening and for final lines, so we can hang up after playout). */
   private speak(r: BrainReply) {
+    if (!r.say) { void this.hangup(); return; } // nothing to say (voicemail): just hang up
     this.transcript.push({ role: "agent", content: r.say }); console.log(`AGENT: ${r.say}`);
     const handle = this.session.say(speakable(r.say), { allowInterruptions: !r.endCall });
     if (r.endCall) handle.waitForPlayout().then(() => this.hangup()).catch(() => this.hangup());
@@ -64,6 +68,26 @@ class SafeNetCaller extends voice.Agent {
 
   async onEnter() {
     this.speak(this.brain.opening());
+  }
+
+  private silenceRunning = false;
+  private userTurns = () => this.transcript.filter((t) => t.role === "user").length;
+
+  /** Caller went quiet: remind up to SILENCE_REMINDERS times, then hang up. (LiveKit fires "away" once per silence, so we loop here.) */
+  async onSilence() {
+    if (this.silenceRunning || this.brain.outcome) return;
+    this.silenceRunning = true;
+    try {
+      const before = this.userTurns();
+      for (let i = 0; i < SILENCE_REMINDERS; i++) {
+        this.speak(this.brain.reminder());
+        await new Promise((r) => setTimeout(r, SILENCE_AFTER_S * 1000));
+        if (this.userTurns() > before || this.brain.outcome) return;
+      }
+      this.speak(this.brain.giveUp());
+    } finally {
+      this.silenceRunning = false;
+    }
   }
 
   private lastTurnKey = "";
@@ -108,7 +132,9 @@ export default defineAgent({
         agent.transcript.map((t) => `${t.role === "agent" ? "AGENT" : "CALLER"}: ${t.content}`).join("\n") + "\n=====\n");
       if (attempt == null) return;
       const answered = agent.transcript.some((t) => t.role === "user");
-      await api(`/internal/calls/${attempt}/ended`, { answered, transcript: agent.transcript }).catch(console.error);
+      // Never spoke → "silent". Otherwise the brain's special outcome, or "hangup" if the safety questions were cut short.
+      const outcome: CallOutcome = !answered ? "silent" : brain.outcome ?? (brain.coreDone ? "completed" : "hangup");
+      await api(`/internal/calls/${attempt}/ended`, { answered, outcome, transcript: agent.transcript }).catch(console.error);
     };
     const hangup = async () => {
       await finish();
@@ -126,6 +152,7 @@ export default defineAgent({
 
     const vsession = new voice.AgentSession({
       turnHandling: { preemptiveGeneration: { enabled: false } },
+      userAwayTimeout: SILENCE_AFTER_S,
       stt: (process.env.LIVEKIT_STT ?? "deepgram/nova-3") as any,
       tts: (process.env.LIVEKIT_TTS ?? "cartesia/sonic-3") as any,
       // Nominal: replies come from the llmNode override, but the pipeline expects an LLM to be configured.
@@ -134,6 +161,9 @@ export default defineAgent({
         baseURL: process.env.NEMOTRON_BASE_URL ?? "https://integrate.api.nvidia.com/v1",
         apiKey: process.env.NVIDIA_API_KEY ?? "unused",
       }),
+    });
+    vsession.on(voice.AgentSessionEventTypes.UserStateChanged, (ev) => {
+      if (ev.newState === "away") void agent.onSilence();
     });
     await vsession.start({ agent, room: ctx.room });
   },

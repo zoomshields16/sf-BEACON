@@ -23,6 +23,19 @@ export function buildRapidSosPayload(ctx: Row, triage: TriageFields, reason: str
   };
 }
 
+/** Welfare-check urgency: base 70, higher for medical needs or age 75+. Capped at 90 so live emergencies still rank above. */
+export const welfareUrgency = (p: Row) => Math.min(90, 70 + (p.medical_needs ?? p.medical ? 10 : 0) + (Number(p.age) >= 75 ? 10 : 0));
+
+/** Unreachable after every retry → human-reviewed welfare check (not an automatic 911). */
+export async function welfareEscalation(ctx: Row, triage: TriageFields, alertId: Id, personId: Id, attempts: number): Promise<Id | null> {
+  const existing = await openEscalationFor(alertId, personId);
+  if (existing) return existing.id;
+  const reason = `Welfare check: unreachable after ${attempts} call attempts.`;
+  const id = await createEscalation(alertId, personId, reason, buildRapidSosPayload(ctx, triage, reason));
+  await logAgent({ alertId, personId, agent: "escalation", tool: "escalate_to_911", thought: `${reason} Escalation #${id} pending review` });
+  return id;
+}
+
 /** critical → always escalate. needs_help with high urgency → Nemotron decides. Returns escalation id or null. */
 export async function maybeEscalate(ctx: Row, triage: TriageFields, alertId: Id, personId: Id): Promise<Id | null> {
   if (triage.status !== "critical" && !(triage.status === "needs_help" && triage.urgency_score >= 70)) return null;

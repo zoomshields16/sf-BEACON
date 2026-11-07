@@ -136,6 +136,13 @@ export const latestAttempt = async (alertId: Id, personId: Id) =>
     [alertId, personId],
   ))[0] ?? null;
 
+/** How many of this person's call attempts ended without reaching them. */
+export const countUnreached = async (alertId: Id, personId: Id): Promise<number> =>
+  Number((await query(
+    `select count(*) as n from contact_attempts where alert_id = $1 and person_id = $2 and status = 'no_answer'`,
+    [alertId, personId],
+  ))[0]?.n ?? 0);
+
 // ---------- conversation_history ----------
 export const addMessage = (
   alertId: Id, personId: Id, attemptId: Id | null, channel: Channel, role: "agent" | "user", content: string,

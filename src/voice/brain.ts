@@ -8,6 +8,7 @@
 import { chatJSON, type Priority } from "../agents/nemotron.js";
 import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger, stripFalsePromises } from "../agents/safety.js";
 import type { CallScript } from "../agents/triage.js";
+import { CASE_REPLIES, SILENCE_GIVEUP, classify, type CallCase, type CallOutcome } from "./cases.js";
 import { ctxEventType, ctxName, logAgent, type Id, type Row } from "../repo.js";
 
 export interface Turn { role: "agent" | "user"; content: string }
@@ -34,6 +35,7 @@ const DANGER_RULE = `Also set danger=true ONLY if the caller's LAST message desc
 trapped, unconscious/unresponsive, not breathing, severe bleeding, collapse, chest pain/stroke, rising water inside,
 fire, gas leak, structure collapse, life-support equipment about to fail, or asking for emergency help.
 Property damage, outages, or problems already resolved are NOT immediate danger.`;
+const MAX_TURNS = 14; // hard cap so a call can never run on forever
 const NON_ANSWER = /^(hello|hi|hey|yes\?|what|huh|sorry|pardon|who is this|who's this|who is calling|can you repeat( that)?|say that again)[\s?.!,]*$/i;
 const ACK_TIMEOUT_MS = Number(process.env.VOICE_ACK_TIMEOUT_MS ?? 1500);
 const TURN_TIMEOUT_MS = Number(process.env.VOICE_TURN_TIMEOUT_MS ?? 3500);
@@ -56,6 +58,9 @@ export class CallBrain {
   private followups = 0;
   private lastAsked = "";
   private dangerHandled = false;
+  private turns = 0;
+  /** Set when the call ends for a special reason (voicemail, opt-out, silence…); null = normal flow. */
+  outcome: CallOutcome | null = null;
   constructor(private s: CallSession, private onDanger?: (userText: string, matched: string[]) => Promise<void>) {}
 
   /** First thing said when the call connects. */
@@ -70,6 +75,15 @@ export class CallBrain {
     return { say: `Are you still there? ${this.lastAsked}`, endCall: false };
   }
 
+  /** Caller stayed silent through every reminder. */
+  giveUp(): BrainReply {
+    this.outcome = "silent";
+    return { say: SILENCE_GIVEUP, endCall: true };
+  }
+
+  /** True once all fixed safety questions have been asked. */
+  get coreDone() { return this.coreIdx >= CORE_QUESTIONS.length; }
+
   async reply(transcript: Turn[]): Promise<BrainReply> {
     const lastUser = [...transcript].reverse().find((t) => t.role === "user")?.content ?? "";
 
@@ -77,9 +91,25 @@ export class CallBrain {
     const keyword = detectDanger(lastUser);
     if (keyword.danger) return this.emergency(lastUser, keyword.matched);
 
-    const { reply, danger } = await this.normalReply(transcript);
-    if (danger) return this.emergency(lastUser, [`nemotron: ${danger}`]);
-    return reply;
+    // Edge cases (voicemail, opt-out, wrong person…) are answered from code, no model call.
+    const kase = classify(lastUser);
+    let out: BrainReply;
+    if (kase) {
+      out = this.caseReply(kase);
+      this.log(`Call case: ${kase}`, { lastUser });
+      if (out.endCall) this.outcome = kase;
+    } else {
+      const { reply, danger } = await this.normalReply(transcript);
+      if (danger) return this.emergency(lastUser, [`nemotron: ${danger}`]);
+      out = reply;
+    }
+    if (++this.turns > MAX_TURNS && !out.endCall) return { say: this.s.script.closing, endCall: true };
+    return out;
+  }
+
+  private caseReply(kase: CallCase): BrainReply {
+    const { say, ends } = CASE_REPLIES[kase];
+    return ends ? { say, endCall: true } : { say: `${say} ${this.lastAsked}`, endCall: false };
   }
 
   private async emergency(lastUser: string, matched: string[]): Promise<BrainReply> {

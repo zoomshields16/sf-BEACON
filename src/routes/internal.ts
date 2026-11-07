@@ -38,6 +38,7 @@ internal.post("/calls/:attemptId/ended", async (req, res) => {
   await handleCallEnded({
     attemptId: req.params.attemptId,
     answered: Boolean(req.body?.answered),
+    outcome: req.body?.outcome,
     transcript: Array.isArray(req.body?.transcript) ? req.body.transcript : [],
   }).catch((e) => console.error("call ended", e));
 });

@@ -1,12 +1,13 @@
 // The contact lifecycle: reach out → result arrives (LiveKit agent or mock) → triage → escalate → follow up.
 import { composeOutreachText, composeReply, extractTriage, generateCallScript } from "./triage.js";
-import { maybeEscalate } from "./escalation.js";
+import { maybeEscalate, welfareEscalation, welfareUrgency } from "./escalation.js";
 import { EMERGENCY_LINE } from "./safety.js";
 import { placeVoiceCall } from "../services/livekit.js";
 import { registerCallSession } from "../voice/brain.js";
+import type { CallOutcome } from "../voice/cases.js";
 import { sendText } from "../services/photon.js";
 import {
-  addMessage, ctxHistory, ctxName, ctxPhone, findAttempt, finishAttempt, getTriage, insertAttempt,
+  addMessage, countUnreached, ctxHistory, ctxName, ctxPhone, findAttempt, finishAttempt, getTriage, insertAttempt,
   latestAttempt, logAgent, personContext, setAttemptExternalId, updateTriage,
   type Channel, type Id, type Row, type TriageFields,
 } from "../repo.js";
@@ -18,6 +19,37 @@ const key = (alertId: Id, personId: Id) => `${alertId}:${personId}`;
 // Inbound texts only carry a phone number; remember who we contacted.
 const phoneIndex = new Map<string, { alertId: Id; personId: Id }>();
 const normPhone = (p: string) => p.replace(/\D/g, "").slice(-10);
+
+// People who asked us to stop calling. ponytail: in-memory only — resets on restart; needs a do_not_contact column in the DB.
+const doNotCall = new Set<string>();
+
+// Outcomes where we didn't actually reach the person → logged as no_answer so the queue retries.
+const NOT_REACHED: CallOutcome[] = ["voicemail", "wrong_person", "no_answer"];
+const OUTCOME_NOTE: Partial<Record<CallOutcome, string>> = {
+  voicemail: "Reached voicemail — hung up without leaving a message, will retry",
+  silent: "Caller picked up but did not respond — treated as a possible emergency, escalated for responder review",
+  wrong_person: "Wrong person / wrong number — verify the phone on file",
+  callback: "Asked to be called back later — responsive but did not verify safety; not retried",
+  opt_out: "Asked us to stop calling — contact stopped (flag for a human; do not retry)",
+  language: "Caller doesn't speak English — flagged needs_help for an interpreter follow-up",
+  hangup: "Caller hung up before the safety questions were finished",
+};
+
+const maxAttempts = () => Number(process.env.MAX_CALL_ATTEMPTS ?? 4); // match call_queue's retry limit
+
+/** Out of retries and still no contact → rank high and queue a welfare check for a human. */
+async function welfareIfExhausted(alertId: Id, personId: Id) {
+  const n = await countUnreached(alertId, personId);
+  if (n < maxAttempts()) return;
+  const current = await getTriage(alertId, personId);
+  if (current && current.status !== "unreached") return; // reached some other way (text, earlier call)
+  const ctx = await personContext(personId, alertId);
+  const t = await applyTriage(alertId, personId, {
+    status: "needs_help", urgency_score: welfareUrgency(ctx.profile ?? ctx.person ?? {}), emergency_type: "unreachable",
+    needs: ["welfare check"], location_in_home: null, notes: `Unreachable after ${n} call attempts; welfare check requested`,
+  });
+  await welfareEscalation(ctx, t, alertId, personId, n);
+}
 
 export const isInFlight = (alertId: Id, personId: Id) => inFlight.has(key(alertId, personId));
 
@@ -32,6 +64,7 @@ export const textsEnabled = () => process.env.TEXTS_ENABLED === "true";
 
 export async function contactPerson(alertId: Id, personId: Id, requested: Channel) {
   if (isInFlight(alertId, personId)) return { status: "skipped", detail: "contact already in progress" };
+  if (doNotCall.has(key(alertId, personId))) return { status: "skipped", detail: "person asked us to stop calling" };
   const channel: Channel = requested === "sms" && !textsEnabled() ? "voice" : requested;
 
   const ctx = await personContext(personId, alertId);
@@ -99,6 +132,7 @@ export interface CallResult {
   attemptId?: Id | null;
   externalId?: string | null;
   answered: boolean;
+  outcome?: CallOutcome; // how the call ended; missing = old behavior (answered ? completed : no_answer)
   transcript: { role: "agent" | "user"; content: string }[];
 }
 
@@ -109,9 +143,31 @@ export async function handleCallEnded(r: CallResult) {
   if (["completed", "no_answer"].includes(attempt.status)) return; // duplicate webhook
 
   clearInFlight(alertId, personId);
-  await finishAttempt(attemptId, r.answered ? "completed" : "no_answer");
-  if (!r.answered) {
-    await logAgent({ alertId, personId, agent: "coordinator", tool: "get_call_result", thought: "No answer — will retry (marked exhausted after 4 attempts)" });
+  const outcome: CallOutcome = r.outcome ?? (r.answered ? "completed" : "no_answer");
+  const reached = outcome === "silent" || (r.answered && !NOT_REACHED.includes(outcome));
+  await finishAttempt(attemptId, reached ? "completed" : "no_answer");
+  const note = OUTCOME_NOTE[outcome] ?? (!r.answered ? "No answer — will retry (marked exhausted after 4 attempts)" : null);
+  if (note) await logAgent({ alertId, personId, agent: "coordinator", tool: "get_call_result", thought: note, output: { outcome } });
+  if (outcome === "opt_out") doNotCall.add(key(alertId, personId));
+  if (outcome === "silent") {
+    // Unresponsive on a live line is the strongest "not okay" signal we get. Escalation is pending_review, so a human confirms.
+    await markCriticalNow(alertId, personId, "Line answered but the caller stopped responding", ["unresponsive"]);
+    return;
+  }
+  if (!reached && outcome !== "opt_out") await welfareIfExhausted(alertId, personId);
+  if (!reached || outcome === "opt_out") return;
+  if (outcome === "callback") {
+    await applyTriage(alertId, personId, {
+      status: "needs_help", urgency_score: 30, emergency_type: "unverified", needs: [],
+      location_in_home: null, notes: "Answered and spoke but asked to be called back later; safety not verified",
+    });
+    return;
+  }
+  if (outcome === "language") {
+    await applyTriage(alertId, personId, {
+      status: "needs_help", urgency_score: 60, emergency_type: "language_barrier", needs: ["interpreter"],
+      location_in_home: null, notes: "Caller does not speak English; needs a translator follow-up",
+    });
     return;
   }
 
