@@ -69,10 +69,9 @@ insert into policyholders (policy_number, first_name, last_name, phone, address,
                            has_children, has_elderly, medical_needs, mobility_limited, pets)
 values
   ('SF-0490001', 'Zoom', 'Shields', '+15550100001', '4800 N Braeswood Blvd, Houston, TX',
-   ST_SetSRID(ST_MakePoint(-95.452, 29.690), 4326), 3, 74, false, true, 'oxygen concentrator', true, '1 dog');
-  -- Peyton: uncomment and add his number
-  -- ,('SF-0490002', 'Peyton', '<last>', '+1XXXXXXXXXX', '5200 Braesvalley Dr, Houston, TX',
-  --   ST_SetSRID(ST_MakePoint(-95.468, 29.684), 4326), 2, 81, false, true, 'dialysis', true, null);
+   ST_SetSRID(ST_MakePoint(-95.452, 29.690), 4326), 3, 74, false, true, 'oxygen concentrator', true, '1 dog'),
+  ('SF-0490002', 'Peyton', 'Demo', '+15550100002', '5200 Braesvalley Dr, Houston, TX',
+   ST_SetSRID(ST_MakePoint(-95.468, 29.684), 4326), 2, 81, false, true, 'dialysis', true, null);
 
 -- ───────────── SafeRooms (~60% of households) ─────────────
 insert into saferooms (person_id, location, has_supplies, notes)
@@ -82,6 +81,6 @@ select id,
        random() < 0.6,
        case when random() < 0.3 then 'Go-bag by the stairs' end
 from policyholders
-where random() < 0.6 or phone = '+15550100001';
+where random() < 0.6 or phone in ('+15550100001', '+15550100002');
 
 drop table _names, _pts;
