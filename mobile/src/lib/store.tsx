@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, ReactNode, useContext, useEffect, useReducer, useRef, useState } from 'react';
 
-import { sendCheckIn, syncAlerts } from './api';
+import { register, sendCheckIn, syncAlerts } from './api';
+import { getPushToken, preciseLocation } from './device';
 import type { Hazard } from './hazards';
 import { HomeProfile, suggestionsFor } from './plan';
 import { HAZARDS } from './hazards';
@@ -261,8 +262,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const al = alerts.find((x) => x.id === a.alertId);
     const room = al && safeRooms.find((r) => r.hazard === al.hazard)?.room;
     const status = a.status === 'saferoom' ? 'saferoom' : a.status;
-    if (user.phone) sendCheckIn(user.phone, Number(a.alertId.slice(4)), status, room).catch(() => {});
+    if (user.phone) preciseLocation().then((loc) => sendCheckIn(user.phone, Number(a.alertId.slice(4)), status, room, loc)).catch(() => {});
   };
+
+  // Tell the backend who this is (creates the policyholder) whenever the profile changes.
+  const h = state.home, hh = state.household;
+  const profileKey = JSON.stringify([state.user.name, state.user.phone, h.street, h.city, h.lat, h.lng, hh, state.safeRooms[0]?.room]);
+  useEffect(() => {
+    if (!ready || !state.onboarded || !state.user.phone || h.lat == null || h.lng == null) return;
+    getPushToken()
+      .then((pushToken) =>
+        register({
+          name: state.user.name, phone: state.user.phone, address: fullAddress(h), lat: h.lat!, lng: h.lng!,
+          adults: hh.adults, children: hh.children, pets: hh.pets, needs: hh.needs, safeRoom: state.safeRooms[0]?.room, pushToken,
+        }),
+      )
+      .catch(() => {});
+  }, [ready, state.onboarded, profileKey]);
 
   // Poll the backend for alerts covering this person's home.
   useEffect(() => {

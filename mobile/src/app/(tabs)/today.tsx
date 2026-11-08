@@ -7,7 +7,7 @@ import { clock, STATUS_PHRASE } from '@/components/time';
 import { RadarCard } from '@/components/radar-card';
 import { Button, Row, Screen, Section, T } from '@/components/ui';
 import { hazardById } from '@/lib/hazards';
-import { activeAlerts, makeTestAlert, readiness, roomFor, useStore } from '@/lib/store';
+import { activeAlerts, readiness, roomFor, useStore } from '@/lib/store';
 import { color, radius, space } from '@/lib/theme';
 
 export default function Today() {
@@ -15,11 +15,6 @@ export default function Today() {
   const alert = activeAlerts(state)[0];
   const ready = readiness(state);
   const firstName = state.user.name.split(' ')[0];
-
-  const runTest = () => {
-    dispatch({ type: 'triggerAlert', alert: makeTestAlert() });
-    router.push('/check-in');
-  };
 
   return (
     <Screen>
@@ -31,10 +26,6 @@ export default function Today() {
         <T v="heading" style={{ flex: 1, letterSpacing: 1.5 }}>
           BEACON
         </T>
-        <Pressable onPress={runTest} style={st.testPill} accessibilityRole="button" hitSlop={6}>
-          <Ionicons name="flash-outline" size={14} color={color.ink} />
-          <T v="caption">Test alert</T>
-        </Pressable>
       </View>
 
       {/* Status */}

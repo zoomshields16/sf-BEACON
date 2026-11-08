@@ -6,6 +6,7 @@ import { MapView } from "./components/MapView";
 import { AgentLog } from "./components/AgentLog";
 import { Escalations } from "./components/Escalations";
 import { PersonPanel } from "./components/PersonPanel";
+import { SendAlert } from "./components/SendAlert";
 
 // Inline confirm (no browser dialog): first click arms, second click within 3 s resets.
 let resetArmedAt = 0;
@@ -122,6 +123,7 @@ export default function App() {
         </div>
 
         <div className="actions">
+          <SendAlert notify={notify} onSent={(id) => { setAlertsVersion((v) => v + 1); setAlertId(id); setDraftAlert(id); setSelected(null); }} />
           <button className="btn btn-primary" onClick={() => run("Alert activated — agent dispatching", () => api.activate(alertId))}>Activate alert</button>
           <button className="btn" onClick={() => run(autopilot.data?.running ? "Autopilot paused" : "Autopilot started", () => api.setAutopilot(alertId, !autopilot.data?.running))}>
             {autopilot.data?.running ? "Pause agent" : "Resume agent"}

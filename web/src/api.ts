@@ -72,6 +72,8 @@ export const api = {
     post<Json>(`/api/alerts/${a}/people/${p}/contact`, { channel }),
   simulate: (a: string, lon: number, lat: number) =>
     post<Json>(`/api/alerts/${a}/simulate`, { lon, lat, radius_m: 800, n: 25 }),
+  appUsers: () => get<{ id: number; name: string; address: string; lat: number; lng: number }[]>(`/api/mobile/users`),
+  sendAlert: (b: Json) => post<Json>(`/api/mobile/send-alert`, b),
   review: (id: number, decision: "confirm" | "dismiss") => post<Escalation>(`/api/escalations/${id}/${decision}`),
 };
 

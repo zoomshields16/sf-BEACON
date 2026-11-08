@@ -2,7 +2,7 @@ import { router } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
 import { Button, Row, Screen, Section, T, ToggleRow } from '@/components/ui';
-import { makeTestAlert, useStore } from '@/lib/store';
+import { useStore } from '@/lib/store';
 import { color, radius, space } from '@/lib/theme';
 
 export default function Profile() {
@@ -97,14 +97,6 @@ export default function Profile() {
       </Section>
 
       <Section title="Demo">
-        <Row
-          icon="flash-outline"
-          label="Run a test tornado warning"
-          onPress={() => {
-            dispatch({ type: 'triggerAlert', alert: makeTestAlert() });
-            router.push('/check-in');
-          }}
-        />
         <Row
           icon="refresh-outline"
           label="Reset app and start over"

@@ -13,5 +13,11 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 
 export type SyncResult = { linked: boolean; alerts: any[] };
 export const syncAlerts = (phone: string) => post<SyncResult>('/sync', { phone });
-export const sendCheckIn = (phone: string, serverAlertId: number, status: string, room?: string) =>
-  post('/checkin', { phone, alertId: serverAlertId, status, room });
+export const sendCheckIn = (phone: string, serverAlertId: number, status: string, room?: string, loc?: { lat: number; lng: number } | null) =>
+  post("/checkin", { phone, alertId: serverAlertId, status, room, ...loc });
+
+export type Registration = {
+  name: string; phone: string; address: string; lat: number; lng: number;
+  adults: number; children: number; pets: number; needs: string; safeRoom?: string; pushToken?: string | null;
+};
+export const register = (r: Registration) => post('/register', r);

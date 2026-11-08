@@ -10,7 +10,7 @@
     "ios": {
       "icon": "./assets/expo.icon",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "BEACON uses your registered home address to show weather around your home."
+        "NSLocationWhenInUseUsageDescription": "BEACON uses your registered home address to show weather around your home. During an emergency check-in it also shares your precise location with responders."
       }
     },
     "android": {
@@ -28,6 +28,7 @@
     },
     "plugins": [
       "expo-router",
+      "expo-notifications",
       [
         "expo-splash-screen",
         {

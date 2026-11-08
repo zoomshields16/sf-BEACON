@@ -6,19 +6,20 @@ import {
   PublicSans_800ExtraBold,
   useFonts,
 } from '@expo-google-fonts/public-sans';
-import { Stack } from 'expo-router';
+import * as Notifications from 'expo-notifications';
+import { router, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { StoreProvider, useStore } from '@/lib/store';
+import { activeAlerts, StoreProvider, useStore } from '@/lib/store';
 import { color } from '@/lib/theme';
 
 SplashScreen.preventAutoHideAsync();
 
 function RootStack() {
-  const { ready } = useStore();
+  const { ready, state } = useStore();
   const [fontsLoaded] = useFonts({
     PublicSans_400Regular,
     PublicSans_500Medium,
@@ -30,6 +31,20 @@ function RootStack() {
   useEffect(() => {
     if (ready && fontsLoaded) SplashScreen.hideAsync();
   }, [ready, fontsLoaded]);
+
+  // Tapping a notification, or a new alert arriving while the app is open, goes straight to the check-in screen.
+  const live = activeAlerts(state).find((a) => a.id.startsWith('srv-'));
+  const opened = useRef<string | null>(null);
+  useEffect(() => {
+    if (ready && fontsLoaded && state.onboarded && live && opened.current !== live.id) {
+      opened.current = live.id;
+      router.push('/check-in');
+    }
+  }, [ready, fontsLoaded, state.onboarded, live?.id]);
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener(() => router.push('/check-in'));
+    return () => sub.remove();
+  }, []);
 
   if (!ready || !fontsLoaded) return null;
 

@@ -203,8 +203,11 @@ export async function createEscalation(
   alertId: Id, personId: Id, reason: string, payload: unknown, kind: EscalationKind = "911",
 ): Promise<Id> {
   const rows = await query(
+    // The phone's last precise location (from the BEACON app) rides along in the payload, separate from the home address.
     `insert into escalations (alert_id, person_id, kind, reason, payload, status)
-     values ($1, $2, $3, $4, $5, 'pending_review') returning id`,
+     values ($1, $2, $3, $4, $5::jsonb || coalesce((select jsonb_build_object('live_location', jsonb_build_object(
+               'lat', last_lat, 'lon', last_lng, 'as_of', last_seen)) from policyholders where id = $2 and last_lat is not null), '{}'::jsonb),
+             'pending_review') returning id`,
     [alertId, personId, kind, reason, JSON.stringify(payload)],
   );
   return rows[0].id;
@@ -241,3 +244,41 @@ export const activeAlertsForPerson = (personId: Id) =>
      left join triage t on t.alert_id = a.id and t.person_id = p.id
      where a.status = 'active' and (a.expires is null or a.expires > now())
      order by a.activated_at desc nulls last`, [personId]);
+
+export interface Registration {
+  name: string; phone: string; address: string; lat: number; lng: number; age?: number | null;
+  adults: number; children: number; pets: string | null; needs: string | null; safeRoom?: string | null; pushToken?: string | null;
+}
+/** Creates the app user as a policyholder (or updates the row that already has this phone). Returns the id. */
+export async function registerPerson(r: Registration): Promise<number> {
+  const [first, ...rest] = r.name.trim().split(/\s+/);
+  const size = Math.min(20, Math.max(1, r.adults + r.children));
+  const vals = [first || "Resident", rest.join(" ") || "-", r.phone, r.address, r.lng, r.lat, size, r.age ?? null,
+    r.children > 0, r.needs || null, r.pets || null, r.pushToken ?? null];
+  const existing = await personByPhone(r.phone);
+  const rows = existing
+    ? await query(
+        `update policyholders set first_name=$1, last_name=$2, address=$4, geom=ST_SetSRID(ST_MakePoint($5,$6),4326),
+           household_size=$7, age=coalesce($8, age), has_children=$9, medical_needs=$10, pets=$11, push_token=coalesce($12, push_token)
+         where id = $13 returning id`, [...vals, existing.id])
+    : await query(
+        `insert into policyholders (first_name,last_name,phone,address,geom,household_size,age,has_children,medical_needs,pets,push_token,policy_number)
+         values ($1,$2,$3,$4,ST_SetSRID(ST_MakePoint($5,$6),4326),$7,$8,$9,$10,$11,$12,'APP-' || $3) returning id`, vals);
+  const id = rows[0].id;
+  if (r.safeRoom) await query(
+    `insert into saferooms (person_id, location) values ($1,$2) on conflict (person_id) do update set location = excluded.location`, [id, r.safeRoom]);
+  return id;
+}
+
+export const saveLocation = (personId: Id, lat: number, lng: number) =>
+  query(`update policyholders set last_lat=$2, last_lng=$3, last_seen=now() where id=$1`, [personId, lat, lng]);
+
+/** People with the app installed, for the dashboard's "send alert" panel. */
+export const appUsers = () =>
+  query(`select id, first_name || ' ' || last_name as name, address, ST_Y(geom) as lat, ST_X(geom) as lng
+         from policyholders where push_token is not null order by id`);
+
+/** Push tokens of app users whose home is inside the alert. */
+export const pushTokensInAlert = async (alertId: Id): Promise<string[]> =>
+  (await query(`select p.push_token from policyholders p join alerts a on a.id = $1 and ST_Covers(a.geom, p.geom)
+                where p.push_token is not null`, [alertId])).map((r: Row) => r.push_token);
