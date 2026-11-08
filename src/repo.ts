@@ -232,7 +232,7 @@ const digits10 = (p: string) => p.replace(/\D/g, "").slice(-10);
 export const personByPhone = async (phone: string) =>
   digits10(phone).length < 10 ? null : (await query(
     `select id, first_name, last_name, address from policyholders
-     where right(regexp_replace(phone, '\D', '', 'g'), 10) = $1 limit 1`, [digits10(phone)]))[0] ?? null;
+     where right(regexp_replace(phone, '[^0-9]', '', 'g'), 10) = $1 limit 1`, [digits10(phone)]))[0] ?? null;
 
 /** Active alerts whose polygon contains this person's home, plus their triage status in each. */
 export const activeAlertsForPerson = (personId: Id) =>
@@ -258,7 +258,7 @@ export async function registerPerson(r: Registration): Promise<number> {
   const existing = await personByPhone(r.phone);
   const rows = existing
     ? await query(
-        `update policyholders set first_name=$1, last_name=$2, address=$4, geom=ST_SetSRID(ST_MakePoint($5,$6),4326),
+        `update policyholders set first_name=$1, last_name=$2, phone=$3, address=$4, geom=ST_SetSRID(ST_MakePoint($5,$6),4326),
            household_size=$7, age=coalesce($8, age), has_children=$9, medical_needs=$10, pets=$11, push_token=coalesce($12, push_token)
          where id = $13 returning id`, [...vals, existing.id])
     : await query(
