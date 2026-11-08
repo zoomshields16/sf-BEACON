@@ -5,6 +5,7 @@ import { alerts } from "./routes/alerts.js";
 import { dashboard } from "./routes/dashboard.js";
 import { webhooks } from "./routes/webhooks.js";
 import { internal } from "./routes/internal.js";
+import { mobile } from "./routes/mobile.js";
 import { endpointStats, nemotronEnabled } from "./agents/nemotron.js";
 import { liveCallStats } from "./voice/brain.js";
 import { startNwsPolling } from "./services/nws.js";
@@ -39,6 +40,7 @@ app.use("/api/alerts", alerts);
 app.use("/api", dashboard);
 app.use("/webhooks", webhooks);
 app.use("/internal", internal);
+app.use("/api/mobile", mobile);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

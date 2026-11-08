@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createContext, ReactNode, useContext, useEffect, useReducer, useState } from 'react';
+import { createContext, ReactNode, useContext, useEffect, useReducer, useRef, useState } from 'react';
 
+import { sendCheckIn, syncAlerts } from './api';
 import type { Hazard } from './hazards';
 import { HomeProfile, suggestionsFor } from './plan';
 import { HAZARDS } from './hazards';
@@ -162,6 +163,7 @@ type Action =
   | { type: 'checkIn'; alertId: string; status: CheckInStatus }
   | { type: 'endAlert'; alertId: string }
   | { type: 'suggestRooms' }
+  | { type: 'serverAlerts'; alerts: Alert[] }
   | { type: 'reset' };
 
 function reducer(s: AppState, a: Action): AppState {
@@ -223,6 +225,16 @@ function reducer(s: AppState, a: Action): AppState {
       });
       return { ...s, safeRooms: [...s.safeRooms, ...added] };
     }
+    case 'serverAlerts': {
+      // Alerts from the BEACON backend replace the ones we got last time; ones that vanished have ended.
+      const incoming = new Map(a.alerts.map((x) => [x.id, x]));
+      const kept = s.alerts.flatMap((x) => {
+        if (!x.id.startsWith('srv-')) return [x];
+        return incoming.has(x.id) ? [] : [{ ...x, expiresAt: Math.min(x.expiresAt, Date.now() - 1) }];
+      });
+      const fresh = a.alerts.map((x) => ({ ...x, checkIn: s.alerts.find((o) => o.id === x.id)?.checkIn }));
+      return { ...s, alerts: [...fresh, ...kept] };
+    }
     case 'reset':
       return emptyState;
   }
@@ -236,15 +248,41 @@ type Ctx = { state: AppState; dispatch: (a: Action) => void; ready: boolean };
 const StoreContext = createContext<Ctx | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, emptyState);
+  const [state, rawDispatch] = useReducer(reducer, emptyState);
   const [ready, setReady] = useState(false);
+  const latest = useRef(state);
+  latest.current = state;
+
+  // Check-ins on backend alerts are also sent to the server (the 30 s timeout asks it to place the safety call).
+  const dispatch = (a: Action) => {
+    rawDispatch(a);
+    if (a.type !== 'checkIn' || !a.alertId.startsWith('srv-')) return;
+    const { user, alerts, safeRooms } = latest.current;
+    const al = alerts.find((x) => x.id === a.alertId);
+    const room = al && safeRooms.find((r) => r.hazard === al.hazard)?.room;
+    const status = a.status === 'saferoom' ? 'saferoom' : a.status;
+    if (user.phone) sendCheckIn(user.phone, Number(a.alertId.slice(4)), status, room).catch(() => {});
+  };
+
+  // Poll the backend for alerts covering this person's home.
+  useEffect(() => {
+    if (!ready || !state.user.phone) return;
+    let stop = false;
+    const tick = () =>
+      syncAlerts(state.user.phone)
+        .then((r) => !stop && r.linked && rawDispatch({ type: 'serverAlerts', alerts: r.alerts }))
+        .catch(() => {});
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => { stop = true; clearInterval(id); };
+  }, [ready, state.user.phone]);
 
   useEffect(() => {
     AsyncStorage.getItem(KEY)
       .then((raw) => {
         if (raw) {
           const saved = JSON.parse(raw);
-          dispatch({ type: 'hydrate', state: { ...emptyState, ...saved, home: { ...emptyState.home, ...saved.home } } });
+          rawDispatch({ type: 'hydrate', state: { ...emptyState, ...saved, home: { ...emptyState.home, ...saved.home } } });
         }
       })
       .catch(() => {})

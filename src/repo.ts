@@ -221,3 +221,23 @@ export const listEscalations = (alertId: Id) =>
 
 export const reviewEscalation = (escalationId: Id, status: "confirmed" | "dismissed") =>
   query(`update escalations set status = $2, reviewed_at = now() where id = $1 returning *`, [escalationId, status]);
+
+// ---------- mobile app (BEACON) ----------
+const digits10 = (p: string) => p.replace(/\D/g, "").slice(-10);
+
+/** Policyholder whose phone matches (last 10 digits), or null. */
+export const personByPhone = async (phone: string) =>
+  digits10(phone).length < 10 ? null : (await query(
+    `select id, first_name, last_name, address from policyholders
+     where right(regexp_replace(phone, '\D', '', 'g'), 10) = $1 limit 1`, [digits10(phone)]))[0] ?? null;
+
+/** Active alerts whose polygon contains this person's home, plus their triage status in each. */
+export const activeAlertsForPerson = (personId: Id) =>
+  query(
+    `select a.id, a.event_type, a.headline, a.description, a.area_desc, a.onset, a.expires, a.created_at,
+            a.activated_at, t.status as triage_status
+     from alerts a
+     join policyholders p on p.id = $1 and st_contains(a.geom, p.geom)
+     left join triage t on t.alert_id = a.id and t.person_id = p.id
+     where a.status = 'active' and (a.expires is null or a.expires > now())
+     order by a.activated_at desc nulls last`, [personId]);
