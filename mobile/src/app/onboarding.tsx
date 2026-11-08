@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { HomeStructureForm, InteriorRoomsPicker } from '@/components/home-form';
 import { Button, Field, Row, s as ui, T } from '@/components/ui';
+import { toE164 } from '@/lib/api';
 import { geocodeHome } from '@/lib/geocode';
 import { HAZARDS } from '@/lib/hazards';
 import { describeSpot } from '@/lib/plan';
@@ -76,7 +77,7 @@ export default function Onboarding() {
 
   const canContinue =
     step === 'account'
-      ? !!user.name.trim() && !!user.phone.trim()
+      ? !!user.name.trim() && !!toE164(user.phone)
       : step === 'address'
         ? !!home.street.trim() && !!home.zip.trim()
         : true;

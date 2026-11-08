@@ -282,3 +282,6 @@ export const appUsers = () =>
 export const pushTokensInAlert = async (alertId: Id): Promise<string[]> =>
   (await query(`select p.push_token from policyholders p join alerts a on a.id = $1 and ST_Covers(a.geom, p.geom)
                 where p.push_token is not null`, [alertId])).map((r: Row) => r.push_token);
+
+export const endOldDemoAlerts = (keepId: Id) =>
+  query(`update alerts set status = 'ended' where nws_id like 'demo-app-%' and id <> $1 and status <> 'ended'`, [keepId]);

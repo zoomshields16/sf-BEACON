@@ -17,7 +17,8 @@ export async function getPushToken(): Promise<string | null> {
     if (status !== 'granted') return null;
     const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
     return (await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined)).data;
-  } catch {
+  } catch (e) {
+    console.warn('[beacon] no push token:', e);
     return null;
   }
 }

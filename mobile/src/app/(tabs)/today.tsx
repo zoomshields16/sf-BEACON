@@ -137,7 +137,6 @@ function CheckedIn({ alertId }: { alertId: string }) {
       ) : null}
       <View style={{ flexDirection: 'row', gap: space.sm, marginTop: space.lg }}>
         <Button kind="secondary" label="Change check-in" onPress={() => router.push('/check-in')} style={{ flex: 1 }} />
-        <Button kind="ghost" label="End test" onPress={() => dispatch({ type: 'endAlert', alertId })} />
       </View>
     </View>
   );

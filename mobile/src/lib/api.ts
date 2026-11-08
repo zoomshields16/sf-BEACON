@@ -21,3 +21,9 @@ export type Registration = {
   adults: number; children: number; pets: number; needs: string; safeRoom?: string; pushToken?: string | null;
 };
 export const register = (r: Registration) => post('/register', r);
+
+/** "(972) 555-0111" → "+19725550111"; null if it isn't a full US number. */
+export const toE164 = (p: string) => {
+  const d = p.replace(/D/g, '');
+  return d.length === 10 ? '+1' + d : d.length === 11 && d[0] === '1' ? '+' + d : null;
+};

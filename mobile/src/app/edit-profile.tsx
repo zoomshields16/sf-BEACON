@@ -1,3 +1,4 @@
+import { toE164 } from '@/lib/api';
 import { useState } from 'react';
 
 import { Sheet } from '@/components/sheet';
@@ -9,7 +10,7 @@ export default function EditProfile() {
   const [u, setU] = useState(state.user);
 
   return (
-    <Sheet title="Your details" canSave={!!u.name.trim() && !!u.phone.trim()} onSave={() => dispatch({ type: 'user', patch: u })}>
+    <Sheet title="Your details" canSave={!!u.name.trim() && !!toE164(u.phone)} onSave={() => dispatch({ type: 'user', patch: u })}>
       <Field label="Full name" value={u.name} onChangeText={(v) => setU({ ...u, name: v })} autoCapitalize="words" />
       <Field
         label="Mobile number"

@@ -1,7 +1,7 @@
 // Endpoints for the BEACON phone app. The app identifies the policyholder by phone number (demo-grade; no auth).
 import { Router } from "express";
 import {
-  activateAlert, activeAlertsForPerson, appUsers, getTriage, logAgent, personByPhone, pushTokensInAlert, registerPerson, saveLocation,
+  activateAlert, activeAlertsForPerson, appUsers, endOldDemoAlerts, getTriage, logAgent, personByPhone, pushTokensInAlert, registerPerson, saveLocation,
   updateTriage, upsertNwsAlert,
 } from "../repo.js";
 import { startAutopilot } from "../agents/coordinator.js";
@@ -14,7 +14,7 @@ export const mobile = Router();
 mobile.post("/register", async (req, res) => {
   const b = req.body ?? {};
   const lat = Number(b.lat), lng = Number(b.lng);
-  if (!b.phone || !b.name || !Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: "name, phone, lat, lng required" });
+  if (String(b.phone ?? "").replace(/D/g, "").length < 10 || !b.name || !Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: "name, phone, lat, lng required" });
   const id = await registerPerson({
     name: String(b.name), phone: String(b.phone), address: String(b.address ?? "Address not given"), lat, lng,
     adults: Math.max(1, Number(b.adults) || 1), children: Math.max(0, Number(b.children) || 0),
@@ -55,6 +55,7 @@ mobile.post("/send-alert", async (req, res) => {
     description: "Take shelter now. Check in on your BEACON app.", geometry: circle(lat, lng, km),
     onset: new Date().toISOString(), expires: new Date(Date.now() + 3600_000).toISOString(),
   });
+  await endOldDemoAlerts(alertId); // only the newest control-panel alert stays live
   const result = await activateAlert(alertId);
   await logAgent({ alertId, agent: "system", thought: `${event_type} sent from the control panel — triage rows created`, output: result });
   if (autopilot) startAutopilot(alertId);
