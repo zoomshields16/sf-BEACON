@@ -53,6 +53,34 @@ export function disasterKey(eventType: string): keyof typeof FALLBACK_FOLLOWUPS 
 
 export const fallbackFollowups = (eventType: string) => FALLBACK_FOLLOWUPS[disasterKey(eventType)];
 
+// Standard, vetted storm-safety tips (FEMA / National Weather Service guidance) read at the end of a NON-emergency call.
+// Fixed text on purpose — the model never improvises safety advice.
+const SAFETY_TIPS: Record<string, string[]> = {
+  flood: ["Never walk or drive through floodwater — turn around, don't drown.",
+          "If water starts coming in, move to a higher floor, and stay away from downed power lines."],
+  hurricane: ["Stay indoors and away from windows until the storm has fully passed.",
+              "If you run a generator, keep it outside and far from doors and windows."],
+  tornado: ["If a tornado warning sounds, go to an interior room on the lowest floor, away from windows.",
+            "Protect your head and neck."],
+  wildfire: ["Keep a go-bag ready and leave right away if you're told to evacuate.",
+             "Keep windows and doors closed to keep smoke out."],
+  winter: ["Never heat your home with a generator, grill or gas oven — carbon monoxide can kill.",
+           "Stay together in one warm room and dress in layers."],
+  default: ["Follow evacuation orders from local officials right away.",
+            "Keep your phone charged and stay tuned to local alerts."],
+};
+
+/** 2 standard tips for the disaster, plus one personal tip when the profile calls for it. */
+export function safetyTips(eventType: string, profile: { medical_needs?: string | null; mobility_limited?: boolean } = {}): string {
+  const tips = [...SAFETY_TIPS[disasterKey(eventType)]];
+  if (/oxygen|cpap|ventilator|dialysis|powered/i.test(profile.medical_needs ?? "")) {
+    tips.push("Keep backup batteries for your medical equipment charged, and plug in while you still have power.");
+  } else if (profile.mobility_limited) {
+    tips.push("Keep your phone charged and within reach in case you need help leaving.");
+  }
+  return tips.join(" ");
+}
+
 // Scan ONLY what the policyholder said (never the agent's questions).
 // We accept false positives on purpose; every escalation goes to human review first.
 const DANGER_PATTERNS: [string, RegExp][] = [

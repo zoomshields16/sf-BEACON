@@ -1,5 +1,5 @@
 import { chatJSON, chatText } from "./nemotron.js";
-import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger, fallbackFollowups } from "./safety.js";
+import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger, fallbackFollowups, safetyTips } from "./safety.js";
 import { ctxEventType, ctxHistory, ctxName, logAgent, type Id, type Row, type TriageFields } from "../repo.js";
 
 export interface CallScript {
@@ -28,9 +28,11 @@ Never repeat the fixed questions. JSON: {"questions": ["..."]}`,
   const source = generated ? "nemotron" : "fallback";
 
   const script: CallScript = {
-    opening: `Hi ${ctxName(ctx)}, this is the State Farm SafeNet assistant calling about the ${event} in your area. I have a few quick safety questions.`,
+    // First thing the caller hears: there is a <storm> in your area right now.
+    opening: `Hi ${ctxName(ctx)}, this is the State Farm SafeNet assistant. There's a ${event} in your area right now, and I'm calling to make sure you and everyone in your home are safe. I have a few quick questions.`,
     questions: [...CORE_QUESTIONS, ...followups],
-    closing: `Thank you. If anything changes or you are in danger, call 911. A State Farm responder will follow up.`,
+    // Non-emergency calls end with standard storm-safety tips (emergencies end on the 911 line instead).
+    closing: `Thank you. Before you go, a few safety tips: ${safetyTips(event, ctx.profile ?? {})} If anything changes or you are in danger, call 911. A State Farm responder will follow up.`,
     source,
   };
   await logAgent({
