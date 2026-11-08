@@ -63,8 +63,13 @@ const DANGER_PATTERNS: [string, RegExp][] = [
   ["structure", /roof (collapsed|caved|caving)|house (collapsed|is collapsing)|ceiling fell/i],
   ["fire", /(house|home|kitchen|room) (is )?on fire|fire (inside|in the house)|flames (inside|in the house)/i],
   ["gas", /smell(s)? gas|gas leak/i],
-  ["explicit", /\b(help me|send help|emergency|we'?re dying|someone is dying)\b/i],
+  // DIRECT asks only. A bare "emergency" or "help me" is NOT here: callers say "what emergency?" after our own opening line
+  // ("…the emergency in your area") and used to get hung up on. Those go to the clarifying-question path in CallBrain.
+  ["direct_ask", /\b(send (help|someone|an ambulance|paramedics|the police)|call (911|nine[- ]?one[- ]?one|an ambulance|the police|the fire department)|(i|we) need (an |the )?(ambulance|paramedics?|police|fire department|911)|we'?re dying|someone is dying)\b/i],
 ];
+
+/** Vague distress: the caller says there is an emergency / asks for help, without a direct ask or a specific life threat. */
+export const VAGUE_DISTRESS = /\b(emergenc(y|ies)|help me|i need help|we need help)\b/i;
 
 // "Nobody is trapped" / "no one is bleeding" must not count as danger. A match is negated when a negation word sits in the
 // same clause, within 4 words before it. Clauses break at punctuation, newlines and but/and/however, so
@@ -80,13 +85,16 @@ function negated(text: string, index: number): boolean {
   const clause = text.slice(0, index).split(new RegExp(CLAUSE_BREAK.source, "gi")).pop() ?? "";
   const words = clause.trim().split(/\s+/).filter(Boolean);
   if (words.length && /^no$/i.test(words[words.length - 1])) return true;          // "no water coming in"
-  return NEGATION.test(words.slice(-2).join(" "));
+  // "no one is bleeding": "no one" sits 3 words back, so it gets a slightly wider window than the other negations.
+  return NEGATION.test(words.slice(-2).join(" ")) || /\bno one\b/i.test(words.slice(-3).join(" "));
 }
 
+/** True if `re` matches somewhere in `text` that isn't negated ("it's not an emergency" → false). */
+export const matchUnnegated = (re: RegExp, text: string) =>
+  [...text.matchAll(new RegExp(re.source, re.flags.replace("g", "") + "g"))].some((m) => !negated(text, m.index ?? 0));
+
 export function detectDanger(userText: string): { danger: boolean; matched: string[] } {
-  const matched = DANGER_PATTERNS
-    .filter(([, re]) => [...userText.matchAll(new RegExp(re.source, re.flags.replace("g", "") + "g"))].some((m) => !negated(userText, m.index ?? 0)))
-    .map(([k]) => k);
+  const matched = DANGER_PATTERNS.filter(([, re]) => matchUnnegated(re, userText)).map(([k]) => k);
   return { danger: matched.length > 0, matched };
 }
 

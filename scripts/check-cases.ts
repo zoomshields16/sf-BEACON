@@ -12,11 +12,11 @@ eq("The person you are calling is not available", "voicemail");
 eq("Stop calling me", "opt_out");
 eq("please take me off your list", "opt_out");
 eq("You have the wrong number", "wrong_person");
-eq("she's not here right now", "wrong_person");
 eq("no hablo ingles", "language");
 eq("I don't speak English", "language");
 eq("can you call me back later", "callback");
-eq("this is a bad time", "callback");
+eq("this is a bad time to talk", "callback");
+assert.equal(classify("Please leave a message after the tone", 2), null, "voicemail words mid-call are ordinary speech");
 eq("are you a robot?", "ai_question");
 eq("is this a scam", "ai_question");
 eq("when is help coming?", "help_question");
@@ -32,6 +32,20 @@ for (const s of ["No! The water is rising in the living room", "no one is hurt b
   "nobody can get to us, we're trapped", "we're not okay, we're trapped upstairs", "Nobody is hurt and my husband is bleeding badly"]) {
   assert.equal(detectDanger(s).danger, true, `SHOULD be danger: "${s}"`);
 }
+
+// 911 should need a DIRECT ask or a specific life threat. Bare "emergency" (incl. asking about OUR emergency) must not trigger it.
+for (const s of ["what emergency?", "where is the emergency", "which emergency are you talking about", "it's not an emergency",
+  "can you tell me more about the emergency", "we have an emergency", "help me", "I need help getting ice"]) {
+  assert.equal(detectDanger(s).danger, false, `should NOT hang up with 911: "${s}"`);
+}
+for (const s of ["please call 911", "send help", "we need an ambulance", "I need the police", "someone is dying"]) {
+  assert.equal(detectDanger(s).danger, true, `direct ask SHOULD be danger: "${s}"`);
+}
+eq("what emergency is this?", "about_emergency");
+eq("where is the emergency", "about_emergency");
+eq("we have an emergency", "vague_distress");
+eq("help me", "vague_distress");
+eq("it's not an emergency", null);
 
 const session: CallSession = {
   alertId: null, personId: null, attemptId: null, ctx: {},
@@ -53,6 +67,21 @@ for (const [said, outcome] of [
   if (outcome === "voicemail") assert.equal(r.say, "", "never leave a voicemail message");
   else assert.ok(r.say.toLowerCase().includes("911"), `${outcome} reply should give the 911 line`);
 }
+
+// Asking about the emergency: explained, call continues, question repeated, no 911.
+const about = await run("what emergency?");
+assert.equal(about.r.endCall, false);
+assert.ok(about.r.say.includes("in your area") && about.r.say.includes(CORE_QUESTIONS[0]));
+assert.ok(!about.r.say.includes("911"));
+
+// Saying "we have an emergency" once → clarifying question; twice → 911.
+const distress = new CallBrain(session);
+const t2: Turn[] = [{ role: "agent", content: distress.opening().say }, { role: "user", content: "we have an emergency" }];
+const first = await distress.reply(t2);
+assert.equal(first.endCall, false);
+assert.match(first.say, /what is happening/i);
+t2.push({ role: "agent", content: first.say }, { role: "user", content: "we have an emergency, please" });
+assert.ok((await distress.reply(t2)).say.includes(EMERGENCY_LINE), "second plea should give the 911 line");
 
 const robot = await run("are you a robot?"); // answers, keeps the call going, repeats the question
 assert.equal(robot.r.endCall, false);

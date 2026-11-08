@@ -59,6 +59,7 @@ export class CallBrain {
   private lastAsked = "";
   private dangerHandled = false;
   private turns = 0;
+  private distressMentions = 0;
   /** Set when the call ends for a special reason (voicemail, opt-out, silence…); null = normal flow. */
   outcome: CallOutcome | null = null;
   constructor(private s: CallSession, private onDanger?: (userText: string, matched: string[]) => Promise<void>) {}
@@ -93,6 +94,8 @@ export class CallBrain {
 
     // Edge cases (voicemail, opt-out, wrong person…) are answered from code, no model call.
     const kase = classify(lastUser, transcript.filter((t) => t.role === "user").length);
+    // Saying "emergency"/"help me" once gets a clarifying question; saying it again means they mean it.
+    if (kase === "vague_distress" && ++this.distressMentions >= 2) return this.emergency(lastUser, ["repeated call for help"]);
     let out: BrainReply;
     if (kase) {
       out = this.caseReply(kase);
@@ -108,6 +111,11 @@ export class CallBrain {
   }
 
   private caseReply(kase: CallCase): BrainReply {
+    if (kase === "about_emergency") {
+      const event = ctxEventType(this.s.ctx) || "emergency";
+      return { say: `I'm calling about the ${event} in your area. I'm just checking that you and everyone in your home are safe. ${this.lastAsked}`, endCall: false };
+    }
+    if (kase === "vague_distress") this.lastAsked = CASE_REPLIES.vague_distress.say; // a silence reminder should repeat this question
     const { say, ends } = CASE_REPLIES[kase];
     return ends ? { say, endCall: true } : { say: `${say} ${this.lastAsked}`, endCall: false };
   }
