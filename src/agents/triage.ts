@@ -58,15 +58,26 @@ function validateTriage(x: any): TriageFields | null {
   };
 }
 
+// A need only counts when the caller says they LACK it ("out of ice", "power's out", "need a ride"),
+// not when they mention it ("we have plenty of water").
+const LACK = String.raw`(?:need|needs|out of|no|without|don'?t have|low on|running out of|ran out of|lost)\s+(?:\w+\s+){0,3}`;
+const NEED_PATTERNS: [RegExp, string][] = [
+  [new RegExp(`${LACK}(?:power|electricity)|power(?:'s| is| has been)? (?:out|off|gone)`, "i"), "power"],
+  [new RegExp(`${LACK}(?:water|drinking water)`, "i"), "water"],
+  [new RegExp(`${LACK}food`, "i"), "food"],
+  [new RegExp(`${LACK}(?:medic\\w*|insulin|oxygen|prescriptions?|ice)|(?:insulin|medication|oxygen)[^.]{0,40}(?:cold|ice|power)`, "i"), "medication"],
+  [new RegExp(`${LACK}(?:shelter|place to (?:stay|go))|somewhere to (?:go|stay)|(?:need|want) to evacuate`, "i"), "shelter"],
+  [new RegExp(`${LACK}(?:ride|transport\\w*|car)|(?:could use|need) a ride`, "i"), "transportation"],
+];
+// Problems stated by the caller. A bare "no" is NOT a problem ("No, nobody is hurt").
+const PROBLEM = /\b(not (?:really|safe|okay|ok|good)|isn'?t safe|unsafe|damage[ds]?|leak\w*|flood\w* (?:in|inside)|hurt|injur\w*|scared|getting cold|no heat|can'?t (?:leave|get out|reach))\b/i;
+const NEGATED_PROBLEM = /\b(no(?:body| one)?|not|nothing)\b[^.?!]{0,20}\b(hurt|injur\w*|damage\w*)/gi;
+
 function heuristicTriage(userText: string): TriageFields {
   const t = userText.toLowerCase();
-  const needs = [
-    [/power|electric/, "power"], [/water|thirst/, "water"], [/food/, "food"],
-    [/medic|insulin|oxygen|prescription/, "medication"], [/shelter|place to stay|evacuat/, "shelter"],
-    [/ride|transport|car/, "transportation"],
-  ].filter(([re]) => (re as RegExp).test(t)).map(([, n]) => n as string);
-  const negative = /\b(no|not|isn'?t|aren'?t|can'?t|unsafe|damage|leak|hurt|injur)\b/.test(t);
-  const status: TriageFields["status"] = needs.length || negative ? "needs_help" : "safe";
+  const needs = NEED_PATTERNS.filter(([re]) => re.test(t)).map(([, n]) => n);
+  const problem = PROBLEM.test(t.replace(NEGATED_PROBLEM, ""));
+  const status: TriageFields["status"] = needs.length || problem ? "needs_help" : "safe";
   return {
     status,
     urgency_score: status === "safe" ? 10 : 50,

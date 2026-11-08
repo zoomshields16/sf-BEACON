@@ -121,6 +121,11 @@ export class CallBrain {
     return { say: `${EMERGENCY_LINE} I'm alerting emergency responders to your address right now.`, endCall: true };
   }
 
+  /** Simulated calls skip Nemotron for conversation turns unless SIM_CALLS_USE_NEMOTRON=true (saves API quota). */
+  private get useModel(): boolean {
+    return !this.s.simulated || process.env.SIM_CALLS_USE_NEMOTRON === "true";
+  }
+
   /** Real calls jump the Nemotron queue; simulated calls wait. */
   private get priority(): Priority {
     return this.s.simulated ? "low" : "high";
@@ -144,7 +149,7 @@ export class CallBrain {
     // Follow-up phase: Nemotron leads, bounded by MAX_FOLLOWUPS.
     if (this.followups < MAX_FOLLOWUPS) {
       const planned = this.s.script.questions.slice(CORE_QUESTIONS.length);
-      const llm = await withTimeout(
+      const llm = !this.useModel ? null : await withTimeout(
         chatJSON(
           `You are the State Farm SafeNet assistant on a LIVE phone call with a policyholder during a disaster.
 The fixed safety questions are done. Now ask at most ${MAX_FOLLOWUPS - this.followups} more short follow-up question(s), ONE per turn,
@@ -172,7 +177,7 @@ JSON: {"say": "...", "done": boolean, "danger": boolean, "danger_reason": "max 8
       // (3) Fallback: next scripted question.
       const next = planned[this.followups++];
       if (next) {
-        this.log("Nemotron slow/unavailable — using scripted follow-up", { say: next });
+        if (this.useModel) this.log("Nemotron slow/unavailable — using scripted follow-up", { say: next });
         this.lastAsked = next;
         return { reply: { say: `Thank you. ${next}`, endCall: false } };
       }
@@ -182,6 +187,7 @@ JSON: {"say": "...", "done": boolean, "danger": boolean, "danger_reason": "max 8
   }
 
   private ack(transcript: Turn[]): Promise<{ ack: string; danger?: string } | null> {
+    if (!this.useModel) return Promise.resolve(null);
     return withTimeout(
       chatJSON(
         `You are on a live disaster check-in call. Write a very short, calm acknowledgement (max 12 words) of what the
