@@ -1,4 +1,4 @@
--- SF-SafeNet schema. Run order: schema.sql → functions.sql → seed.sql
+-- BEACON schema. Run order: schema.sql → functions.sql → seed.sql
 -- Re-runnable: drops and recreates everything (demo database, no migrations).
 create extension if not exists postgis;
 

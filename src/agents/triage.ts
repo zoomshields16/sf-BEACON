@@ -29,7 +29,7 @@ Never repeat the fixed questions. JSON: {"questions": ["..."]}`,
 
   const script: CallScript = {
     // First thing the caller hears: there is a <storm> in your area right now.
-    opening: `Hi ${ctxName(ctx)}, this is the State Farm SafeNet assistant. There's a ${event} in your area right now, and I'm calling to make sure you and everyone in your home are safe. I have a few quick questions.`,
+    opening: `Hi ${ctxName(ctx)}, this is the State Farm BEACON assistant. There's a ${event} in your area right now, and I'm calling to make sure you and everyone in your home are safe. I have a few quick questions.`,
     questions: [...CORE_QUESTIONS, ...followups],
     // Non-emergency calls end with standard storm-safety tips (emergencies end on the 911 line instead).
     closing: `Thank you. Before you go — try to stay calm and take slow, deep breaths; you're doing the right things. A few safety tips: ${safetyTips(event, ctx.profile ?? {})} If anything changes or you are in danger, call 911. A State Farm responder will follow up.`,
@@ -145,7 +145,7 @@ export async function composeOutreachText(ctx: Row, alertId: Id, personId: Id): 
   const prior = lastUserStatement(ctx);
   const event = ctxEventType(ctx);
   const llm = await chatText(
-    `You write ONE SMS (max 300 chars) from the State Farm SafeNet assistant to a policyholder during a ${event}.
+    `You write ONE SMS (max 300 chars) from the State Farm BEACON assistant to a policyholder during a ${event}.
 If there was a previous call, reference what they said on it specifically ("On our call you said ...") and ask if it's still true.
 Otherwise ask: are you and everyone in your home safe right now? Always end with: "If you're in immediate danger, call 911."
 Output only the SMS text.`,
@@ -155,8 +155,8 @@ Output only the SMS text.`,
   const text = valid
     ? llm!
     : prior
-      ? `State Farm SafeNet: On our ${prior.channel === "sms" ? "last text" : "call"} you said "${prior.text.slice(0, 120)}". Is that still the case? Reply SAFE if you're okay or HELP if you need assistance. If you're in immediate danger, call 911.`
-      : `State Farm SafeNet: we're checking on you during the ${event}. Are you and everyone in your home safe right now? Reply SAFE or HELP. If you're in immediate danger, call 911.`;
+      ? `State Farm BEACON: On our ${prior.channel === "sms" ? "last text" : "call"} you said "${prior.text.slice(0, 120)}". Is that still the case? Reply SAFE if you're okay or HELP if you need assistance. If you're in immediate danger, call 911.`
+      : `State Farm BEACON: we're checking on you during the ${event}. Are you and everyone in your home safe right now? Reply SAFE or HELP. If you're in immediate danger, call 911.`;
   await logAgent({
     alertId, personId, agent: "triage", tool: "compose_text",
     thought: valid ? "Composed follow-up text with Nemotron" : "Using template text" + (prior ? " referencing prior call" : ""),

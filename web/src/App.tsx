@@ -95,7 +95,7 @@ export default function App() {
         <div className="brand">
           <span className="logo">◉</span>
           <div>
-            <div className="brand-name">SafeNet</div>
+            <div className="brand-name">BEACON</div>
             <div className="brand-sub">State Farm · Disaster Response</div>
           </div>
         </div>

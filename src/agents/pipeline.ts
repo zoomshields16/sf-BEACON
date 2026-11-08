@@ -212,7 +212,7 @@ export async function handleCallEnded(r: CallResult) {
   // Belt-and-braces: a critical call also gets the 911 instruction in writing.
   if (triage.status === "critical" && textsEnabled()) {
     const phone = ctxPhone(ctx);
-    const text = `State Farm SafeNet: ${EMERGENCY_LINE.replace("hang up and ", "")} We have flagged your case for emergency responders.`;
+    const text = `State Farm BEACON: ${EMERGENCY_LINE.replace("hang up and ", "")} We have flagged your case for emergency responders.`;
     if (phone) {
       await addMessage(alertId, personId, attemptId, "sms", "agent", text);
       await sendText(phone, text, { expectReply: false }).catch((e) => console.error(e));

@@ -1,4 +1,4 @@
--- SF-SafeNet query functions. The backend calls these through src/repo.ts.
+-- BEACON query functions. The backend calls these through src/repo.ts.
 -- Tunables live in safenet_setting() so they're easy to find.
 
 create or replace function safenet_setting(key text) returns numeric language sql immutable as $$

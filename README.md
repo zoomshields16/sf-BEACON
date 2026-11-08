@@ -1,4 +1,4 @@
-# SF-SafeNet
+# BEACON
 
 Disaster-response voice/text agent for State Farm policyholders (HackUTD 2026). See `CLAUDE.md` for the full scope.
 

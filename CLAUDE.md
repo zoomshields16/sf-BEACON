@@ -1,4 +1,4 @@
-# SF-SafeNet (HackUTD 2026)
+# BEACON (HackUTD 2026)
 
 Disaster-response agent for State Farm policyholders. When a disaster alert hits an area, a Nemotron
 agent finds every policyholder whose home is inside the alert polygon, prioritizes them, places AI

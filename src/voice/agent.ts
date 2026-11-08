@@ -30,7 +30,7 @@ async function api<T = any>(path: string, body?: unknown): Promise<T> {
 const testSession = (): CallSession => ({
   alertId: null, personId: null, attemptId: null, ctx: {},
   script: {
-    opening: "Hi, this is the State Farm SafeNet assistant checking on you during the emergency in your area.",
+    opening: "Hi, this is the State Farm BEACON assistant checking on you during the emergency in your area.",
     questions: [...CORE_QUESTIONS, "Do you have power, water, and any medications you need?"],
     closing: "Thank you. If anything changes or you are in danger, call 911.",
     source: "fallback",
@@ -56,7 +56,7 @@ class SafeNetCaller extends voice.Agent {
   readonly transcript: Turn[] = [];
 
   constructor(private brain: CallBrain, private hangup: () => Promise<void>) {
-    super({ instructions: "State Farm SafeNet disaster check-in caller. Replies are produced by CallBrain." });
+    super({ instructions: "State Farm BEACON disaster check-in caller. Replies are produced by CallBrain." });
   }
 
   /** Speak via session.say (used for the opening and for final lines, so we can hang up after playout). */

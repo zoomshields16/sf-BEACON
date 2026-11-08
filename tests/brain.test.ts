@@ -5,7 +5,7 @@ delete process.env.NVIDIA_API_KEY;
 const { CallBrain } = await import("../src/voice/brain.js");
 const { CORE_QUESTIONS } = await import("../src/agents/safety.js");
 
-const script = { opening: "Hi, SafeNet here.", questions: [...CORE_QUESTIONS, "Do you have power?"], closing: "Goodbye.", source: "fallback" as const };
+const script = { opening: "Hi, BEACON here.", questions: [...CORE_QUESTIONS, "Do you have power?"], closing: "Goodbye.", source: "fallback" as const };
 const session = () => ({ alertId: null, personId: null, attemptId: null, ctx: {}, script });
 
 async function run(answers: string[], onDanger?: (t: string, m: string[]) => Promise<void>) {

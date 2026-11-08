@@ -1,4 +1,4 @@
-# SafeNet Risk Classifier (PyTorch Lightning on Nemotron embeddings)
+# BEACON Risk Classifier (PyTorch Lightning on Nemotron embeddings)
 
 A third, independent opinion on every caller turn of a **real** call — next to the keyword scan and Nemotron.
 It **never triggers the 911 line**: if it sees a likely life threat (≥ 80 %) that the keywords and Nemotron missed,

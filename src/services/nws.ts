@@ -4,7 +4,7 @@ import { upsertNwsAlert, type Row } from "../repo.js";
 
 const BASE = "https://api.weather.gov";
 // NWS asks every client to send a descriptive User-Agent.
-const UA = process.env.NWS_USER_AGENT || "SF-SafeNet/0.1 (HackUTD 2026 demo)";
+const UA = process.env.NWS_USER_AGENT || "BEACON/0.1 (HackUTD 2026 demo)";
 const MAX_ZONES = 60;
 
 async function getJson(url: string): Promise<any> {
