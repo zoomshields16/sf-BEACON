@@ -171,7 +171,8 @@ export class CallBrain {
 The fixed safety questions are done. Now ask at most ${MAX_FOLLOWUPS - this.followups} more short follow-up question(s), ONE per turn,
 responding naturally to what they just said. Planned follow-ups (use, adapt, or skip): ${JSON.stringify(planned)}.
 Rules: under 30 words, warm and calm, never promise that help or responders are coming, no medical/legal/claims advice (say a State Farm agent will follow up on claims).
-If you have what responders need, set done=true and say a brief thank-you.
+If you have what responders need, OR the caller says "that's all", "no", "nothing else", "I'm fine", set done=true and say a brief thank-you.
+Only ask about things in the caller profile or things they mentioned — never invent pets, family members or equipment.
 ${DANGER_RULE}
 JSON: {"say": "...", "done": boolean, "danger": boolean, "danger_reason": "max 8 words"}`,
           `Caller profile: ${profileSummary(this.s.ctx)}\n\nCall so far:\n${transcriptText(transcript).slice(-4000)}`,

@@ -2,21 +2,38 @@ import OpenAI from "openai";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
 import { logAgent, type AgentLogEntry, type Id } from "../repo.js";
 
-// NEMOTRON_API_KEY = key for a Brev/self-hosted endpoint; falls back to the build.nvidia.com key.
-const apiKey = () => process.env.NEMOTRON_API_KEY || process.env.NVIDIA_API_KEY;
-export const nemotronEnabled = () => Boolean(apiKey() && process.env.NEMOTRON_MODEL);
+// Two endpoints:
+//   primary  = NEMOTRON_BASE_URL (our own Nemotron NIM on Brev) if set, else NVIDIA's hosted API
+//   fallback = NVIDIA's hosted API (build.nvidia.com) — used automatically while the primary is down
+// If the Brev GPU is stopped/unreachable mid-demo, calls keep working on the hosted API.
+const HOSTED_URL = "https://integrate.api.nvidia.com/v1";
+const HOSTED_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b";
+const selfHosted = () => Boolean(process.env.NEMOTRON_BASE_URL);
+export const nemotronEnabled = () =>
+  Boolean(process.env.NEMOTRON_MODEL && (selfHosted() || process.env.NVIDIA_API_KEY));
 
-let client: OpenAI | null = null;
-function getClient() {
-  client ??= new OpenAI({
-    apiKey: apiKey(),
-    // Hosted API by default; point at a Nemotron NIM on Brev with NEMOTRON_BASE_URL.
-    baseURL: process.env.NEMOTRON_BASE_URL || "https://integrate.api.nvidia.com/v1",
-    timeout: 30_000,
-    maxRetries: 1,
-  });
-  return client;
+interface Endpoint { name: "brev" | "hosted"; client: OpenAI; model: string }
+let primary: Endpoint | null = null;
+let fallback: Endpoint | null | undefined;
+function endpoints(): { primary: Endpoint; fallback: Endpoint | null } {
+  if (!primary) {
+    primary = selfHosted()
+      ? { name: "brev", model: process.env.NEMOTRON_MODEL!,
+          client: new OpenAI({ apiKey: process.env.NEMOTRON_API_KEY || "none", baseURL: process.env.NEMOTRON_BASE_URL, timeout: 10_000, maxRetries: 0 }) }
+      : { name: "hosted", model: process.env.NEMOTRON_MODEL!,
+          client: new OpenAI({ apiKey: process.env.NVIDIA_API_KEY, baseURL: HOSTED_URL, timeout: 30_000, maxRetries: 1 }) };
+    fallback = selfHosted() && process.env.NVIDIA_API_KEY
+      ? { name: "hosted", model: process.env.NEMOTRON_FALLBACK_MODEL || HOSTED_MODEL,
+          client: new OpenAI({ apiKey: process.env.NVIDIA_API_KEY, baseURL: HOSTED_URL, timeout: 30_000, maxRetries: 1 }) }
+      : null;
+  }
+  return { primary, fallback: fallback ?? null };
 }
+
+// Circuit breaker: after the primary fails (network / timeout / 5xx), use the fallback for 30 s, then try again.
+let primaryDownUntil = 0;
+export const endpointStats = { brev: 0, hosted: 0, failovers: 0, lastFailover: null as string | null };
+const isOutage = (err: any) => !err?.status || err.status >= 500 || err.name === "APIConnectionError" || err.name === "APIConnectionTimeoutError";
 
 // Some Nemotron models toggle reasoning via the system prompt (e.g. "/no_think" or
 // "detailed thinking off"). Set NEMOTRON_SYSTEM_PREFIX if tool calls are flaky.
@@ -31,7 +48,8 @@ const thinking = (on: boolean) => ({ chat_template_kwargs: { enable_thinking: on
 // "high" = a real phone call (someone is waiting on the line), "normal" = coordinator/triage, "low" = simulated calls.
 export type Priority = "high" | "normal" | "low";
 const RANK: Record<Priority, number> = { high: 0, normal: 1, low: 2 };
-const MAX_CONCURRENCY = Number(process.env.NEMOTRON_MAX_CONCURRENCY ?? 3);
+// Our own H100 batches requests well; the shared hosted API rate-limits, so stay gentle there.
+const MAX_CONCURRENCY = Number(process.env.NEMOTRON_MAX_CONCURRENCY ?? (process.env.NEMOTRON_BASE_URL ? 8 : 3));
 let active = 0;
 const waiting: { rank: number; go: () => void }[] = [];
 
@@ -54,7 +72,24 @@ async function create(params: CreateParams, priority: Priority = "normal"): Prom
   try {
     for (let attempt = 0; ; attempt++) {
       try {
-        return (await getClient().chat.completions.create({ ...params, stream: false } as any)) as OpenAI.Chat.Completions.ChatCompletion;
+        const { primary, fallback } = endpoints();
+        const usePrimary = !fallback || Date.now() >= primaryDownUntil;
+        const ep = usePrimary ? primary : fallback!;
+        try {
+          const res = (await ep.client.chat.completions.create({ ...params, model: ep.model, stream: false } as any)) as OpenAI.Chat.Completions.ChatCompletion;
+          endpointStats[ep.name]++;
+          return res;
+        } catch (err: any) {
+          if (ep === primary && fallback && isOutage(err)) {
+            primaryDownUntil = Date.now() + 30_000;
+            endpointStats.failovers++; endpointStats.lastFailover = new Date().toISOString();
+            console.error(`[nemotron] ${primary.name} endpoint failed (${err?.status ?? err?.name}) — using ${fallback.name} for 30 s`);
+            const res = (await fallback.client.chat.completions.create({ ...params, model: fallback.model, stream: false } as any)) as OpenAI.Chat.Completions.ChatCompletion;
+            endpointStats[fallback.name]++;
+            return res;
+          }
+          throw err;
+        }
       } catch (err: any) {
         // Retry rate limits (429) and NVIDIA-side blips (5xx); give up fast on low-priority (simulated) work.
         const retryable = err?.status === 429 || (err?.status >= 500 && err?.status < 600);

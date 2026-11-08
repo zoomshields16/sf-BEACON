@@ -59,7 +59,8 @@ const DANGER_PATTERNS: [string, RegExp][] = [
   ["trapped", /\b(trapped|stuck|can'?t get out|pinned)\b/i],
   ["breathing", /can'?t breathe|not breathing|trouble breathing|unconscious|unresponsive|passed out/i],
   ["injury", /bleeding|badly hurt|seriously (hurt|injured)|broken (bone|leg|arm|hip)|chest pain|heart attack|stroke/i],
-  ["water", /water('s| is)? (rising|coming in|up to)|flooding (in|inside)|swept/i],
+  // Water INSIDE or at a dangerous depth — not "water is up to the second step outside".
+  ["water", /water('s| is)? (rising|coming in|coming into|pouring in)|water('s| is)? (up to|at|over) (my|our|his|her|their|the) (knees?|waist|chest|neck|shoulders|windows?|ceiling|first floor|second floor|door ?knob)|water (in|inside) the (house|home|living room|kitchen|bedroom)|flooding (in|inside)|swept/i],
   ["structure", /roof (collapsed|caved|caving)|house (collapsed|is collapsing)|ceiling fell/i],
   ["fire", /(house|home|kitchen|room) (is )?on fire|fire (inside|in the house)|flames (inside|in the house)/i],
   ["gas", /smell(s)? gas|gas leak/i],

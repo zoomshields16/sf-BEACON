@@ -29,3 +29,10 @@ test("real edge cases are still recognized", () => {
   assert.equal(classify("Can you call me back later?", 2), "callback");
   assert.equal(classify("Please stop calling me", 3), "opt_out");
 });
+
+test("water outside / on the steps is not an emergency; water inside or chest-deep is", () => {
+  assert.equal(detectDanger("The water is up to the second step outside but the house is dry.").danger, false);
+  for (const t of ["the water is up to my waist", "water is coming into the house", "there's water in the living room", "the water is rising"]) {
+    assert.equal(detectDanger(t).danger, true, t);
+  }
+});
