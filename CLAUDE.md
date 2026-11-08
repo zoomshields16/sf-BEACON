@@ -47,7 +47,9 @@ Three roles, each a ReAct loop (reason → call tool → observe → repeat). Ev
 - **Coordinator**: pulls `call_queue`, chooses who to contact and on which channel, re-plans when hex risk changes.
 - **Triage**: before a call, writes the script (3 fixed safety questions + 2–3 generated from
   `person_context`); after a call/text, extracts `{status, urgency_score, emergency_type, needs[], location_in_home, notes}` into `triage`.
-- **Escalation**: decides if a case goes to 911; builds the simulated RapidSOS payload into `escalations` (status `pending_review` for a human to confirm).
+- **Escalation**: **911 only for life-or-death** (triage `critical`) → simulated RapidSOS payload in `escalations` (kind `911`,
+  `pending_review` for a human). High-urgency needs (medication, power, transport) and welfare checks go to the State Farm
+  responder queue (kind `urgent_assist` / `welfare`) — never 911.
 
 Tools (TypeScript functions exposed via function calling): `get_call_queue`, `get_person_context`,
 `generate_call_script`, `place_voice_call`, `send_text`, `get_call_result`, `update_triage`,
