@@ -4,39 +4,43 @@ do $$
 declare
   v jsonb;
   n int;
+  inside int;
   zoom int;
   before numeric;
   after numeric;
 begin
   perform reset_demo(1);
+  select count(*) into inside from policyholders p, alerts a where a.id = 1 and ST_Covers(a.geom, p.geom);
+  assert inside >= 1000, format('seed should put 1000+ people in the alert, got %s', inside);
+  assert (select count(*) from policyholders) > inside, 'seed should also have people outside the alert';
 
   -- activation picks up exactly the people inside the polygon
   v := activate_alert(1);
-  assert (v->>'people')::int = 181, format('expected 181 people in alert, got %s', v->>'people');
+  assert (v->>'people')::int = inside, format('expected %s people in alert, got %s', inside, v->>'people');
   assert (v->>'hexes')::int > 50, 'hex grid not built';
   select count(*) into n from triage t join policyholders p on p.id = t.person_id
    where t.alert_id = 1 and not ST_Covers((select geom from alerts where id = 1), p.geom);
   assert n = 0, 'someone outside the alert got a triage row';
   perform activate_alert(1);  -- idempotent
-  assert (select count(*) from triage where alert_id = 1) = 181, 'activate_alert is not idempotent';
+  assert (select count(*) from triage where alert_id = 1) = inside, 'activate_alert is not idempotent';
 
   -- call queue: ordered by priority, every row explains itself
-  select count(*) into n from call_queue(1, 500);
-  assert n = 181, format('queue should hold all 181 unreached, got %s', n);
-  assert (select bool_and(array_length(reasons, 1) is not null or priority < 30) from call_queue(1, 500)),
+  select count(*) into n from call_queue(1, 5000);
+  assert n = inside, format('queue should hold all %s unreached, got %s', inside, n);
+  assert (select bool_and(array_length(reasons, 1) is not null or priority < 30) from call_queue(1, 5000)),
          'high-priority people must have reasons';
 
   -- flood reports near a person push them up the queue
   select id into zoom from policyholders where phone = '+15550100001';
-  select priority into before from call_queue(1, 500) where person_id = zoom;
+  select priority into before from call_queue(1, 5000) where person_id = zoom;
   perform simulate_reports(1, -95.452, 29.690, 700, 25);
-  select priority into after from call_queue(1, 500) where person_id = zoom;
+  select priority into after from call_queue(1, 5000) where person_id = zoom;
   assert after > before, format('hazard reports did not raise priority (%s → %s)', before, after);
   assert (select person_id from call_queue(1, 1)) = zoom, 'demo person should be #1 after nearby flood reports';
 
   -- someone on a call is not queued twice
   insert into contact_attempts (alert_id, person_id, channel) values (1, zoom, 'voice');
-  assert not exists (select 1 from call_queue(1, 500) where person_id = zoom), 'person on a live call is still queued';
+  assert not exists (select 1 from call_queue(1, 5000) where person_id = zoom), 'person on a live call is still queued';
 
   -- 4 unanswered attempts → exhausted (trigger)
   update contact_attempts set status = 'no_answer', ended_at = now() where person_id = zoom;
@@ -62,8 +66,8 @@ begin
   assert v ? 'profile' and v ? 'history' and v ? 'triage' and v ? 'alert', 'person_context missing keys';
   assert v->'profile'->>'phone' = '+15550100001', 'person_context phone wrong';
   v := alert_stats(1);
-  assert (v->>'total')::int = 181 and (v->>'critical')::int = 1 and (v->>'exhausted')::int = 1, format('alert_stats wrong: %s', v);
-  assert jsonb_array_length(map_people_geojson(1)->'features') = 181, 'people GeoJSON count wrong';
+  assert (v->>'total')::int = inside and (v->>'critical')::int = 1 and (v->>'exhausted')::int = 1, format('alert_stats wrong: %s', v);
+  assert jsonb_array_length(map_people_geojson(1)->'features') = inside, 'people GeoJSON count wrong';
   assert jsonb_array_length(map_hex_geojson(1)->'features') > 50, 'hex GeoJSON empty';
 
   -- NWS ingest upserts by id

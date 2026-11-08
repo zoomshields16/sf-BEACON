@@ -1,4 +1,4 @@
--- Demo data: a Flash Flood Warning over SW Houston (Braes Bayou), ~180 policyholders inside, 20 outside.
+-- Demo data: a Flash Flood Warning over SW Houston (Braes Bayou), 1,500 policyholders inside, 100 outside.
 -- Deterministic (setseed), so every teammate gets the same people. Re-run after schema.sql.
 select setseed(0.42);
 
@@ -19,22 +19,25 @@ select setval('alerts_id_seq', (select max(id) from alerts));
 create temp table _names as select
   array['Maria','James','Linda','Robert','Aisha','Wei','Carlos','Patricia','Daniel','Grace','Tomas','Nina',
         'Harold','Priya','Luis','Ruth','Kevin','Fatima','Marcus','Elena','Samuel','Joy','Andre','Mei',
-        'Dorothy','Hector','Leah','Victor','Imani','Frank']                          as first,
+        'Dorothy','Hector','Leah','Victor','Imani','Frank','Sofia','Omar','Hannah','Jamal','Lucia','Ethan',
+        'Keisha','Raj','Ana','Brian','Yolanda','Minh','Rosa','Tyrone','Ingrid','Diego','Naomi','Arthur']   as first,
   array['Garcia','Nguyen','Johnson','Patel','Williams','Okafor','Kim','Hernandez','Brown','Lopez',
-        'Davis','Chen','Martinez','Thompson','Ali','Robinson','Tran','Wilson','Moore','Jackson']  as last,
+        'Davis','Chen','Martinez','Thompson','Ali','Robinson','Tran','Wilson','Moore','Jackson',
+        'Rodriguez','Le','Anderson','Taylor','Gonzalez','Harris','Clark','Ramirez','Lewis','Walker',
+        'Hall','Young','Allen','Shah','Wright','Scott','Flores','Green','Adams','Baker']             as last,
   array['Braes Blvd','S Rice Ave','Chimney Rock Rd','Beechnut St','N Braeswood Blvd','S Braeswood Blvd',
         'Hillcroft Ave','Fondren Rd','Bissonnet St','Renwick Dr','Stella Link Rd','Jason St']    as street,
   array['oxygen concentrator','insulin','dialysis','CPAP machine','wheelchair user','home nurse visits'] as medical,
   array['1 dog','2 dogs','1 cat','2 cats','dog and cat']                                  as pets;
 
--- 180 inside the alert + 20 just outside (to show the polygon filter works).
+-- 1,500 inside the alert ("the worst day, at scale") + 100 just outside (to show the polygon filter works).
 create temp table _pts as
   select row_number() over () as n, geom, inside from (
-    select (ST_Dump(ST_GeneratePoints(geom, 180, 7))).geom as geom, true as inside
+    select (ST_Dump(ST_GeneratePoints(geom, 1500, 7))).geom as geom, true as inside
     from alerts where id = 1
     union all
     select (ST_Dump(ST_GeneratePoints(
-              ST_Difference(ST_Buffer(geom::geography, 2500)::geometry, geom), 20, 11))).geom, false
+              ST_Difference(ST_Buffer(geom::geography, 2500)::geometry, geom), 100, 11))).geom, false
     from alerts where id = 1
   ) s;
 
@@ -42,8 +45,8 @@ insert into policyholders (policy_number, first_name, last_name, phone, address,
                            has_children, has_elderly, medical_needs, mobility_limited, pets, language)
 select
   'SF-' || lpad((480000 + n)::text, 7, '0'),
-  first[1 + (n * 7) % array_length(first, 1)],
-  last[1 + (n * 13) % array_length(last, 1)],
+  first[1 + floor(random() * array_length(first, 1))::int],
+  last[1 + floor(random() * array_length(last, 1))::int],
   '+1555' || lpad((2000000 + n)::text, 7, '0'),          -- fake 555 numbers: never dialed for real
   (2000 + floor(random() * 8000))::int || ' ' || street[1 + n % array_length(street, 1)] || ', Houston, TX',
   geom,
@@ -53,10 +56,11 @@ select
   age >= 70 or random() < 0.12,
   case when random() < (case when age >= 70 then 0.45 else 0.10 end)
        then medical[1 + floor(random() * array_length(medical, 1))::int] end,
-  age >= 80 or random() < 0.06,
+  age >= 85 or random() < 0.05,
   case when random() < 0.4 then pets[1 + floor(random() * array_length(pets, 1))::int] end,
   case when random() < 0.15 then 'es' else 'en' end
-from _pts, _names, lateral (select (22 + floor(random() * 70))::int + 0 * n as age) a  -- "+ 0 * n" makes it per-row
+-- Adult ages 22–94, skewed younger (~15% are 70+, like a real neighborhood). "+ 0 * n" makes it per-row.
+from _pts, _names, lateral (select (22 + floor(power(random(), 2.4) * 73))::int + 0 * n as age) a
 order by n;
 
 -- ───────────── demo people with REAL phones (these are the only numbers ever dialed) ─────────────
