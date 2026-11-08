@@ -31,7 +31,7 @@ begin
          'high-priority people must have reasons';
 
   -- flood reports near a person push them up the queue
-  select id into zoom from policyholders where phone = '+15550100001';
+  select id into zoom from policyholders where policy_number = 'SF-0490001';
   select priority into before from call_queue(1, 5000) where person_id = zoom;
   perform simulate_reports(1, -95.452, 29.690, 700, 25);
   select priority into after from call_queue(1, 5000) where person_id = zoom;
@@ -72,7 +72,7 @@ begin
   -- context + dashboard shapes the backend relies on
   v := person_context(zoom, 1);
   assert v ? 'profile' and v ? 'history' and v ? 'triage' and v ? 'alert', 'person_context missing keys';
-  assert v->'profile'->>'phone' = '+15550100001', 'person_context phone wrong';
+  assert v->'profile'->>'phone' = (select phone from policyholders where id = zoom), 'person_context phone wrong';
   v := alert_stats(1);
   assert (v->>'total')::int = inside and (v->>'critical')::int = 1 and (v->>'exhausted')::int = 1, format('alert_stats wrong: %s', v);
   assert jsonb_array_length(map_people_geojson(1)->'features') = inside, 'people GeoJSON count wrong';

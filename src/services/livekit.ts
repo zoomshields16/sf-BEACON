@@ -15,10 +15,10 @@ export interface PlaceCallInput {
   ctx: Row;
 }
 
-/** Only numbers in LIVE_CALL_ALLOWLIST (comma-separated) ever get a real call; 555 numbers never do. */
+/** Only numbers in LIVE_CALL_ALLOWLIST (comma-separated; defaults to DEMO_PHONES) ever get a real call; 555 numbers never do. */
 export function isLiveDialable(phone: string): boolean {
   const digits = (p: string) => p.replace(/\D/g, "").slice(-10);
-  const allow = (process.env.LIVE_CALL_ALLOWLIST ?? "").split(",").map((s) => s.trim()).filter(Boolean).map(digits);
+  const allow = (process.env.LIVE_CALL_ALLOWLIST || process.env.DEMO_PHONES || "").split(",").map((s) => s.trim()).filter(Boolean).map(digits);
   return allow.includes(digits(phone)) && !/^555/.test(digits(phone).slice(3));
 }
 

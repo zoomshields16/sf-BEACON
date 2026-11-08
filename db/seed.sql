@@ -63,8 +63,9 @@ select
 from _pts, _names, lateral (select (22 + floor(power(random(), 2.4) * 73))::int + 0 * n as age) a
 order by n;
 
--- ───────────── demo people with REAL phones (these are the only numbers ever dialed) ─────────────
--- Placed inside the alert near the bayou so they rank high in the call queue.
+-- ───────────── team demo people ─────────────
+-- Placeholder 555 numbers here (never dialed). `npm run db:setup` swaps in the real team phones from
+-- DEMO_PHONES in .env, so real numbers never live in git. Placed near the bayou so they rank high in the queue.
 insert into policyholders (policy_number, first_name, last_name, phone, address, geom, household_size, age,
                            has_children, has_elderly, medical_needs, mobility_limited, pets)
 values
@@ -81,6 +82,6 @@ select id,
        random() < 0.6,
        case when random() < 0.3 then 'Go-bag by the stairs' end
 from policyholders
-where random() < 0.6 or phone in ('+15550100001', '+15550100002');
+where random() < 0.6 or policy_number in ('SF-0490001', 'SF-0490002');
 
 drop table _names, _pts;

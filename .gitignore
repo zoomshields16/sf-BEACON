@@ -8,3 +8,6 @@ dist/
 *.log
 web/node_modules/
 web/dist/
+
+# DB snapshots contain real team phone numbers — share privately like .env
+db/snapshots/
