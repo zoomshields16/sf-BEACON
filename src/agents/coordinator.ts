@@ -20,15 +20,18 @@ Each round:
 Refer to people by name (never assume gender). Don't stop to summarize until the calls are placed.
 Before EVERY tool call, write one short sentence in your message explaining why (e.g. "Maria is 81 on oxygen in a flooded hex — calling her first."). When the round's contacts are started, reply with a one-sentence summary.`;
 
-/** Top-risk hexes as a signature, so we can notice when the risk picture changes. */
-async function hotHexSignature(alertId: Id) {
+const HIGH_RISK = 0.5;
+
+/** The set of high-risk hexes (risk ≥ 0.5) as a signature, so we notice when the risk picture changes. */
+async function hotHexSignature(alertId: Id): Promise<{ sig: string; count: number; max: number }> {
   try {
     const rows = await hexRisk(alertId);
     const score = (r: Row) => Number(r.risk ?? r.risk_score ?? r.score ?? 0);
     const id = (r: Row) => String(r.h3 ?? r.hex_id ?? r.hex ?? r.id ?? "");
-    return [...rows].sort((a, b) => score(b) - score(a)).slice(0, 3).map(id).join(",");
+    const hot = rows.filter((r) => score(r) >= HIGH_RISK).map(id).sort();
+    return { sig: hot.join(","), count: hot.length, max: Math.max(0, ...rows.map(score)) };
   } catch {
-    return "";
+    return { sig: "", count: 0, max: 0 };
   }
 }
 
@@ -47,11 +50,13 @@ export async function coordinatorRound(alertId: Id) {
   if (running.has(k)) return { skipped: true };
   running.add(k);
   try {
-    const sig = await hotHexSignature(alertId);
-    const changed = sig !== "" && lastHotHexes.has(k) && lastHotHexes.get(k) !== sig;
-    lastHotHexes.set(k, sig);
+    const hot = await hotHexSignature(alertId);
+    const prev = lastHotHexes.get(k);
+    const changed = prev !== undefined && prev !== hot.sig && hot.count > 0;
+    lastHotHexes.set(k, hot.sig);
     if (changed) {
-      await logAgent({ alertId, agent: "coordinator", tool: "get_hex_risk", thought: `Hex risk shifted (hot: ${sig}) — re-planning priorities` });
+      await logAgent({ alertId, agent: "coordinator", tool: "get_hex_risk",
+        thought: `Flood risk jumped: ${hot.count} high-risk zone(s), max ${hot.max.toFixed(2)} — re-planning priorities`, output: hot });
     }
 
     const r = await runAgent({

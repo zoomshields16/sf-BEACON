@@ -135,6 +135,10 @@ export async function insertAttempt(alertId: Id, personId: Id, channel: Channel)
 export const setAttemptExternalId = (attemptId: Id, externalId: string) =>
   query(`update contact_attempts set external_id = $2 where id = $1`, [attemptId, externalId]);
 
+/** On API start: attempts left 'in_progress' by a crash/restart would block those people forever — close them. */
+export const closeOrphanedAttempts = async (): Promise<number> =>
+  (await query(`update contact_attempts set status = 'timeout', ended_at = now() where status = 'in_progress' returning id`)).length;
+
 export const finishAttempt = (attemptId: Id, status: string) =>
   query(`update contact_attempts set status = $2, ended_at = now() where id = $1`, [attemptId, status]);
 

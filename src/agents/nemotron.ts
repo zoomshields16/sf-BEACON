@@ -54,7 +54,9 @@ async function create(params: CreateParams, priority: Priority = "normal"): Prom
       try {
         return (await getClient().chat.completions.create({ ...params, stream: false } as any)) as OpenAI.Chat.Completions.ChatCompletion;
       } catch (err: any) {
-        if (err?.status !== 429 || attempt >= 2 || priority === "low") throw err;
+        // Retry rate limits (429) and NVIDIA-side blips (5xx); give up fast on low-priority (simulated) work.
+        const retryable = err?.status === 429 || (err?.status >= 500 && err?.status < 600);
+        if (!retryable || attempt >= 2 || priority === "low") throw err;
         await new Promise((r) => setTimeout(r, 300 * (attempt + 1) + Math.random() * 200));
       }
     }
@@ -147,7 +149,9 @@ function describe(tool: string, args: any, out: any): string {
       }
       case "get_hex_risk": {
         const hot = (Array.isArray(out) ? out : []).filter((h: any) => Number(h.risk) >= 0.5);
-        return hot.length ? `Checked flood risk: ${hot.length} high-risk zone(s), worst ${Number(hot[0].risk).toFixed(2)}` : "Checked flood risk: no high-risk zones yet";
+        const max = Math.max(0, ...(Array.isArray(out) ? out : []).map((h: any) => Number(h.risk) || 0));
+        return hot.length ? `Checked flood risk: ${hot.length} high-risk zone(s), worst ${max.toFixed(2)}`
+                          : `Checked flood risk: highest ${max.toFixed(2)} — no high-risk zones yet`;
       }
       case "get_person_context": {
         const p = out?.profile ?? {};
