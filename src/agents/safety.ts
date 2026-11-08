@@ -57,7 +57,7 @@ export const fallbackFollowups = (eventType: string) => FALLBACK_FOLLOWUPS[disas
 // We accept false positives on purpose; every escalation goes to human review first.
 const DANGER_PATTERNS: [string, RegExp][] = [
   ["trapped", /\b(trapped|stuck|can'?t get out|pinned)\b/i],
-  ["breathing", /can'?t breathe|not breathing|trouble breathing|unconscious|unresponsive|passed out/i],
+  ["breathing", /can'?t breathe|not breathing|trouble breathing|unconscious|unresponsive|passed out|can'?t (wake|rouse) (him|her|them|my \w+)( up)?|won'?t wake up|not waking up|(turning|turned|lips are|lips) blue|limp and|seizure|convuls\w*|stopped breathing/i],
   ["injury", /bleeding|badly hurt|seriously (hurt|injured)|broken (bone|leg|arm|hip)|chest pain|heart attack|stroke/i],
   // Water INSIDE or at a dangerous depth — not "water is up to the second step outside".
   ["water", /water('s| is)? (rising|coming in|coming into|pouring in)|water('s| is)? (up to|at|over) (my|our|his|her|their|the) (knees?|waist|chest|neck|shoulders|windows?|ceiling|first floor|second floor|door ?knob)|water (in|inside) the (house|home|living room|kitchen|bedroom)|flooding (in|inside)|swept/i],
@@ -91,12 +91,30 @@ function negated(text: string, index: number): boolean {
 }
 
 /** True if `re` matches somewhere in `text` that isn't negated ("it's not an emergency" → false). */
+// A danger that the same sentence says is already OVER ("was trapped earlier but they got her out", "rescued",
+// "everyone's safe now") is not a current emergency. Kept narrow on purpose: "my son was swept away" still triggers.
+const RESOLVED = /\b(got (her|him|them|us|me) out|pulled (her|him|them|us|me) out|(was|were|got) rescued|rescued (her|him|them|us|me)|(is|are|'s|'re) (safe|fine|okay|out) now|no longer (trapped|stuck|in danger))\b/i;
+function sentenceAt(text: string, index: number): string {
+  const start = Math.max(text.lastIndexOf(".", index), text.lastIndexOf("!", index), text.lastIndexOf("?", index)) + 1;
+  const rest = text.slice(index).search(/[.!?]/);
+  return text.slice(start, rest < 0 ? undefined : index + rest);
+}
+
 export const matchUnnegated = (re: RegExp, text: string) =>
-  [...text.matchAll(new RegExp(re.source, re.flags.replace("g", "") + "g"))].some((m) => !negated(text, m.index ?? 0));
+  [...text.matchAll(new RegExp(re.source, re.flags.replace("g", "") + "g"))]
+    .some((m) => !negated(text, m.index ?? 0) && !RESOLVED.test(sentenceAt(text, m.index ?? 0)));
 
 export function detectDanger(userText: string): { danger: boolean; matched: string[] } {
   const matched = DANGER_PATTERNS.filter(([, re]) => matchUnnegated(re, userText)).map(([k]) => k);
   return { danger: matched.length > 0, matched };
+}
+
+// Nemotron's danger flag only counts if the caller's words (or the model's stated reason) name a CONCRETE life threat.
+// "Lots of water around and thunder" is weather, not an emergency — the model alone must not trigger the 911 line.
+const LIFE_THREAT = /\b(trapped|stuck|can'?t get out|pinned|injur\w*|hurt (badly|bad)|badly hurt|bleed\w*|blood|breath\w*|unconscious|unresponsive|not respond\w*|isn'?t (answering|responding|moving)|collaps\w*|passed out|faint\w*|chest pain|heart attack|stroke|seizure|drown\w*|swept|fell|fallen|can'?t (move|get up|walk)|fire|flames|smoke|gas|roof|ceiling|structure|oxygen|ventilator|dialysis|life.?support|electrocut\w*|power line|send help|help me|emergency|dying|water (is )?(inside|in the (house|home|room|living room|kitchen|bedroom)|coming in|rising|pouring)|flood\w* (inside|in the house))\b/i;
+
+export function isConcreteThreat(...texts: (string | undefined)[]): boolean {
+  return texts.some((t) => Boolean(t) && LIFE_THREAT.test(t!));
 }
 
 // The agent must never imply rescue is coming — only a human responder can promise that.

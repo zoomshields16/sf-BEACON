@@ -1,7 +1,7 @@
 // Regression tests for the code-review findings (2026-11-07).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-const { detectDanger } = await import("../src/agents/safety.js");
+const { detectDanger, isConcreteThreat } = await import("../src/agents/safety.js");
 const { classify } = await import("../src/voice/cases.js");
 
 test("unpunctuated speech-to-text still triggers danger", () => {
@@ -35,4 +35,19 @@ test("water outside / on the steps is not an emergency; water inside or chest-de
   for (const t of ["the water is up to my waist", "water is coming into the house", "there's water in the living room", "the water is rising"]) {
     assert.equal(detectDanger(t).danger, true, t);
   }
+});
+
+test("Nemotron's danger flag needs a concrete life threat (live-call false alarm: 'thundering')", () => {
+  assert.equal(isConcreteThreat("thundering reported", "Yes. There was a lot of water around, and I heard some thundering."), false);
+  assert.equal(isConcreteThreat("flooded street", "The street is flooded and the power is out."), false);
+  assert.equal(isConcreteThreat("collapsed and unresponsive", "My dad just collapsed in the kitchen and he isn't answering me."), true);
+  assert.equal(isConcreteThreat("oxygen failing", "My oxygen machine just died."), true);
+});
+
+test("unwakeable / blue / seizing person always triggers (keyword, no model needed)", () => {
+  for (const t of ["My baby has a really high fever and I can't wake him up properly.", "she won't wake up", "his lips are turning blue", "my daughter is having a seizure"]) {
+    assert.equal(detectDanger(t).danger, true, t);
+  }
+  assert.equal(detectDanger("Nobody is hurt now, my neighbor was trapped earlier but the fire department got her out.").danger, false);
+  assert.equal(detectDanger("My son was swept away by the water!").danger, true);
 });

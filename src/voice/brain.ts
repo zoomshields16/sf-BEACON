@@ -6,7 +6,7 @@
 //   2. Every user turn is keyword-scanned; danger → 911 line, end call, mark critical + escalate mid-call.
 //   3. If Nemotron is slow or returns junk, we speak the next scripted question instead.
 import { chatJSON, type Priority } from "../agents/nemotron.js";
-import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger, stripFalsePromises } from "../agents/safety.js";
+import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger, isConcreteThreat, stripFalsePromises } from "../agents/safety.js";
 import type { CallScript } from "../agents/triage.js";
 import { CASE_REPLIES, SILENCE_GIVEUP, classify, type CallCase, type CallOutcome } from "./cases.js";
 import { ctxEventType, ctxName, logAgent, type Id, type Row } from "../repo.js";
@@ -38,10 +38,14 @@ function countTurn(byModel: boolean) {
 }
 
 const MAX_FOLLOWUPS = 3;
-const DANGER_RULE = `Also set danger=true ONLY if the caller's LAST message describes IMMEDIATE danger to life right now:
+const DANGER_RULE = `Think critically first: write threat_assessment (what is actually happening right now, to whom, and
+whether it could kill or seriously injure someone within the next hour — or is it weather, property, past or resolved).
+Then set danger=true ONLY if the caller's LAST message describes IMMEDIATE danger to life right now:
 trapped, unconscious/unresponsive, not breathing, severe bleeding, collapse, chest pain/stroke, rising water inside,
 fire, gas leak, structure collapse, life-support equipment about to fail, or asking for emergency help.
-Property damage, outages, or problems already resolved are NOT immediate danger.`;
+Property damage, outages, or problems already resolved are NOT immediate danger.
+NOT danger (danger=false): "lots of water around", "I heard thunder", "the street is flooded", "power is out", "I'm scared",
+"water is up to the steps outside". Weather and flooding OUTSIDE the home are not, by themselves, a threat to life.`;
 const MAX_TURNS = 14; // hard cap so a call can never run on forever
 const NON_ANSWER = /^(hello|hi|hey|yes\?|what|huh|sorry|pardon|who is this|who's this|who is calling|can you repeat( that)?|say that again)[\s?.!,]*$/i;
 const ACK_TIMEOUT_MS = Number(process.env.VOICE_ACK_TIMEOUT_MS ?? 1500);
@@ -110,7 +114,9 @@ export class CallBrain {
       if (out.endCall) this.outcome = kase;
     } else {
       const { reply, danger } = await this.normalReply(transcript);
-      if (danger) return this.emergency(lastUser, [`nemotron: ${danger}`]);
+      // The model's flag must name a concrete life threat (its reason or the caller's words) — weather alone never triggers 911.
+      if (danger && isConcreteThreat(danger, lastUser)) return this.emergency(lastUser, [`nemotron: ${danger}`]);
+      if (danger) this.log(`Nemotron flagged "${danger}" but no concrete life threat was stated — continuing the call`, { lastUser });
       out = reply;
     }
     if (++this.turns > MAX_TURNS && !out.endCall) return { say: this.s.script.closing, endCall: true };
@@ -128,6 +134,7 @@ export class CallBrain {
   }
 
   private async emergency(lastUser: string, matched: string[]): Promise<BrainReply> {
+    this.outcome = "completed";   // we ended the call on purpose for safety — not a caller hang-up
     if (!this.dangerHandled) {
       this.dangerHandled = true;
       this.log(`DANGER on live call [${matched.join(", ")}] — giving 911 instruction and escalating`, { lastUser });
@@ -174,7 +181,7 @@ Rules: under 30 words, warm and calm, never promise that help or responders are 
 If you have what responders need, OR the caller says "that's all", "no", "nothing else", "I'm fine", set done=true and say a brief thank-you.
 Only ask about things in the caller profile or things they mentioned — never invent pets, family members or equipment.
 ${DANGER_RULE}
-JSON: {"say": "...", "done": boolean, "danger": boolean, "danger_reason": "max 8 words"}`,
+JSON: {"threat_assessment": "one sentence: what is happening and is anyone's life at risk in the next hour?", "say": "...", "done": boolean, "danger": boolean, "danger_reason": "max 8 words"}`,
           `Caller profile: ${profileSummary(this.s.ctx)}\n\nCall so far:\n${transcriptText(transcript).slice(-4000)}`,
           (x: any) => (typeof x?.say === "string" && x.say.length > 0 && x.say.length < 400 && typeof x?.done === "boolean" ? x : null),
           this.priority,
@@ -183,7 +190,7 @@ JSON: {"say": "...", "done": boolean, "danger": boolean, "danger_reason": "max 8
       );
       if (!this.s.simulated) countTurn(Boolean(llm));
       if (llm) {
-        const danger = llm.danger === true ? String(llm.danger_reason ?? "immediate danger") : undefined;
+        const danger = llm.danger === true ? String(llm.danger_reason ?? llm.threat_assessment ?? "immediate danger") : undefined;
         if (danger) return { reply: { say: "", endCall: true }, danger };
         llm.say = stripFalsePromises(llm.say);
         this.log(llm.done ? "Nemotron: enough information — wrapping up" : "Nemotron chose next follow-up", { say: llm.say });
@@ -211,10 +218,10 @@ JSON: {"say": "...", "done": boolean, "danger": boolean, "danger_reason": "max 8
         `You are on a live disaster check-in call. Write a very short, calm acknowledgement (max 12 words) of what the
 caller just said. Do NOT ask a question. Never promise that help is coming.
 ${DANGER_RULE}
-JSON: {"ack": "...", "danger": boolean, "danger_reason": "max 8 words"}`,
+JSON: {"threat_assessment": "one sentence: what is happening and is anyone's life at risk in the next hour?", "ack": "...", "danger": boolean, "danger_reason": "max 8 words"}`,
         transcriptText(transcript.slice(-4)),
         (x: any) => (typeof x?.ack === "string" && x.ack.length < 120 && !x.ack.includes("?")
-          ? { ack: stripFalsePromises(x.ack as string), danger: x.danger === true ? String(x.danger_reason ?? "immediate danger") : undefined }
+          ? { ack: stripFalsePromises(x.ack as string), danger: x.danger === true ? String(x.danger_reason ?? x.threat_assessment ?? "immediate danger") : undefined }
           : null),
         this.priority,
       ),
