@@ -148,6 +148,7 @@ export default function App() {
       <main className="main">
         <section className="map-wrap">
           <MapView
+            key={alertId}
             people={people.data}
             hex={hex.data}
             selected={selected}

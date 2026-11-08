@@ -20,6 +20,14 @@ app.use((_req, res, next) => {
   next();
 });
 
+// The cloudflared tunnel (for the phone on school Wi-Fi) forwards EVERYTHING, so over it only the phone app's endpoints are reachable.
+// Tunnel traffic carries a cf-connecting-ip header; the dashboard (localhost proxy) and the voice agent never do.
+const PHONE_PATHS = new RegExp("^/(health|api/mobile/(sync|checkin|register|location))$");
+app.use((req, res, next) => {
+  if (req.headers["cf-connecting-ip"] && !PHONE_PATHS.test(req.path)) return res.status(403).json({ error: "not available over the tunnel" });
+  next();
+});
+
 app.get("/health", async (_req, res) => {
   let db = false;
   try {

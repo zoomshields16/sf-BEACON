@@ -38,6 +38,8 @@ function RootStack() {
   useEffect(() => {
     if (ready && fontsLoaded && state.onboarded && live && opened.current !== live.id) {
       opened.current = live.id;
+      if (live.checkIn) return;
+      Notifications.scheduleNotificationAsync({ content: { title: live.title, body: `${live.area}. Check in now.`, sound: true }, trigger: null }).catch(() => {});
       router.push('/check-in');
     }
   }, [ready, fontsLoaded, state.onboarded, live?.id]);

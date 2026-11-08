@@ -36,7 +36,7 @@ export function SendAlert({ onSent, notify }: { onSent: (alertId: string) => voi
 
   if (!open) return <button className="btn btn-primary" onClick={() => setOpen(true)}>Send alert…</button>;
   return (
-    <div className="panel" style={{ position: "absolute", top: 64, right: 12, zIndex: 50, width: 340, display: "grid", gap: 8, padding: 14 }}>
+    <div className="send-panel">
       <h3>Send an alert</h3>
       <label>Event<select value={event} onChange={(e) => setEvent(e.target.value)}>{EVENTS.map((x) => <option key={x}>{x}</option>)}</select></label>
       <label>Area centered on
@@ -46,7 +46,7 @@ export function SendAlert({ onSent, notify }: { onSent: (alertId: string) => voi
         </select>
       </label>
       <label>Radius: {km} km<input type="range" min={2} max={40} value={km} onChange={(e) => setKm(Number(e.target.value))} /></label>
-      <label><input type="checkbox" checked={agent} onChange={(e) => setAgent(e.target.checked)} /> Start the calling agent immediately (calls everyone inside)</label>
+      <label className="check"><input type="checkbox" checked={agent} onChange={(e) => setAgent(e.target.checked)} /> Start the calling agent immediately (calls everyone inside)</label>
       <div style={{ display: "flex", gap: 8 }}>
         <button className="btn btn-primary" disabled={busy} onClick={send}>{busy ? "Sending…" : "Send"}</button>
         <button className="btn" onClick={() => setOpen(false)}>Cancel</button>

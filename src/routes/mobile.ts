@@ -14,7 +14,7 @@ export const mobile = Router();
 mobile.post("/register", async (req, res) => {
   const b = req.body ?? {};
   const lat = Number(b.lat), lng = Number(b.lng);
-  if (String(b.phone ?? "").replace(/D/g, "").length < 10 || !b.name || !Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: "name, phone, lat, lng required" });
+  if (String(b.phone ?? "").replace(/[^0-9]/g, "").length < 10 || !b.name || !Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: "name, phone, lat, lng required" });
   const id = await registerPerson({
     name: String(b.name), phone: String(b.phone), address: String(b.address ?? "Address not given"), lat, lng,
     adults: Math.max(1, Number(b.adults) || 1), children: Math.max(0, Number(b.children) || 0),
@@ -104,6 +104,7 @@ mobile.post("/checkin", async (req, res) => {
   if (status === "help") {
     await markCriticalNow(alertId, person.id, "Tapped 'I need help' in the BEACON app", ["app_help_request"]);
   } else if (status === "no-response") {
+    if (triage.status === "safe") return res.json({ status: "skipped", detail: "already checked in" });
     // The 30 s check-in timer ran out → the voice agent calls them.
     await logAgent({ alertId, personId: person.id, agent: "system", thought: "No answer in the BEACON app — placing the safety call" });
     return res.json(await contactPerson(alertId, person.id, "voice"));

@@ -8,5 +8,7 @@ export async function sendPush(tokens: string[], title: string, body: string, da
     body: JSON.stringify(to.map((t) => ({ to: t, title, body, data, sound: "default", priority: "high", interruptionLevel: "time-sensitive" }))),
   });
   if (!res.ok) throw new Error(`Expo push ${res.status}`);
-  return to.length;
+  const tickets: { status: string; message?: string }[] = (await res.json()).data ?? [];
+  tickets.filter((t) => t.status !== "ok").forEach((t) => console.warn("[push]", t.message));
+  return tickets.filter((t) => t.status === "ok").length;
 }

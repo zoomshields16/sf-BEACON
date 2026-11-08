@@ -233,7 +233,11 @@ function reducer(s: AppState, a: Action): AppState {
         if (!x.id.startsWith('srv-')) return [x];
         return incoming.has(x.id) ? [] : [{ ...x, expiresAt: Math.min(x.expiresAt, Date.now() - 1) }];
       });
-      const fresh = a.alerts.map((x) => ({ ...x, checkIn: s.alerts.find((o) => o.id === x.id)?.checkIn }));
+      // Already safe on the server (checked in earlier, or on another device)? Then don't ask again.
+      const fresh = a.alerts.map((x: any) => ({
+        ...x,
+        checkIn: s.alerts.find((o) => o.id === x.id)?.checkIn ?? (x.triageStatus === 'safe' ? { status: 'safe' as const, at: Date.now() } : undefined),
+      }));
       return { ...s, alerts: [...fresh, ...kept] };
     }
     case 'reset':

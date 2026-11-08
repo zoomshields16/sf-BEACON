@@ -48,13 +48,17 @@ export function MapView({ people, hex, selected, onSelect, simulateMode, onSimul
     // draw critical last so it sits on top
     .sort((a, b) => (a.status === "critical" ? 1 : 0) - (b.status === "critical" ? 1 : 0));
 
+  // Outline points of the hex grid: lets the map zoom to an alert area even when it has no seeded policyholders.
+  const hexPoints: [number, number][] = (hex?.features ?? []).flatMap((f: any) =>
+    (f.geometry?.coordinates?.[0] ?? []).map((c: number[]) => [c[1], c[0]] as [number, number]));
   const hexKey = JSON.stringify((hex?.features ?? []).map((f: any) => f.properties?.risk ?? f.properties?.risk_score));
 
   return (
     <MapContainer center={[29.76, -95.37]} zoom={12} className={`map ${simulateMode ? "map-sim" : ""}`} preferCanvas>
       <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-        attribution='&copy; OpenStreetMap contributors &copy; CARTO'
+        url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+        className="dark-tiles"
+        attribution='&copy; OpenStreetMap contributors'
       />
       {hex?.features?.length > 0 && (
         <GeoJSON
@@ -85,7 +89,7 @@ export function MapView({ people, hex, selected, onSelect, simulateMode, onSimul
           </Tooltip>
         </CircleMarker>
       ))}
-      <FitOnce points={pts.map((p) => p.latlng)} />
+      <FitOnce points={pts.length ? pts.map((p) => p.latlng) : hexPoints} />
       <ClickToSimulate enabled={simulateMode} onSimulate={onSimulate} />
     </MapContainer>
   );

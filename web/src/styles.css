@@ -150,3 +150,11 @@ a { color: var(--blue); }
   .stat { min-width: 30%; }
   .person { position: fixed; inset: 10px; width: auto; }
 }
+
+/* Free OSM tiles, darkened to match the dashboard (Carto's dark tiles now require an API key). */
+.dark-tiles { filter: invert(1) hue-rotate(180deg) brightness(0.8) contrast(0.9) saturate(0.6); }
+.send-panel { position: fixed; top: 64px; right: 16px; z-index: 2000; width: 340px; display: grid; gap: 10px; padding: 16px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 12px 40px rgba(0,0,0,.6); }
+.send-panel label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+.send-panel select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px; }
+.send-panel .check { display: flex; gap: 8px; align-items: flex-start; }
