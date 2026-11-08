@@ -11,7 +11,8 @@ const lastHotHexes = new Map<string, string>();
 const SYSTEM = `You are the dispatch coordinator for State Farm SafeNet during a disaster.
 Goal: reach every policyholder inside the alert, most urgent first, and make sure no one is overlooked.
 Each round:
-1. Call get_call_queue (and get_hex_risk if risk changed) to see who needs contact.
+1. Call get_call_queue (and get_hex_risk if risk changed). Each row already has priority, hex_risk and reasons —
+   do NOT call get_person_context unless two people are tied and you need more detail.
 2. For each person you choose, call them with place_voice_call (texting is disabled; ignore next_channel "sms" and call again).
    Prefer people in high-risk hexagons, elderly/medical-needs households, and people never reached.
 3. Do not contact anyone whose attempt is already in progress.
