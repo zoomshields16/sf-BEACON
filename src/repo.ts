@@ -136,12 +136,14 @@ export const latestAttempt = async (alertId: Id, personId: Id) =>
     [alertId, personId],
   ))[0] ?? null;
 
-/** How many of this person's call attempts ended without reaching them. */
+/** How many of this person's call attempts ended without reaching them (no_answer / failed / timeout).
+ *  Same definition the DB uses for call_queue and the exhausted trigger. */
 export const countUnreached = async (alertId: Id, personId: Id): Promise<number> =>
-  Number((await query(
-    `select count(*) as n from contact_attempts where alert_id = $1 and person_id = $2 and status = 'no_answer'`,
-    [alertId, personId],
-  ))[0]?.n ?? 0);
+  Number((await query(`select failed_attempts($1, $2) as n`, [alertId, personId]))[0]?.n ?? 0);
+
+/** Caller asked us to stop calling — persisted, so call_queue never re-queues them (survives restarts). */
+export const setDoNotContact = (alertId: Id, personId: Id) =>
+  query(`update triage set do_not_contact = true, updated_at = now() where alert_id = $1 and person_id = $2`, [alertId, personId]);
 
 // ---------- conversation_history ----------
 export const addMessage = (
@@ -155,7 +157,7 @@ export const addMessage = (
 
 // ---------- triage ----------
 export interface TriageFields {
-  status: "unreached" | "safe" | "needs_help" | "critical";
+  status: "unreached" | "safe" | "needs_help" | "critical" | "exhausted";
   urgency_score: number;
   emergency_type: string | null;
   needs: string[];

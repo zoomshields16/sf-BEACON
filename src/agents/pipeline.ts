@@ -8,7 +8,7 @@ import type { CallOutcome } from "../voice/cases.js";
 import { sendText } from "../services/photon.js";
 import {
   addMessage, countUnreached, ctxHistory, ctxName, ctxPhone, findAttempt, finishAttempt, getTriage, insertAttempt,
-  latestAttempt, logAgent, personContext, setAttemptExternalId, updateTriage,
+  latestAttempt, logAgent, setDoNotContact, personContext, setAttemptExternalId, updateTriage,
   type Channel, type Id, type Row, type TriageFields,
 } from "../repo.js";
 
@@ -20,8 +20,6 @@ const key = (alertId: Id, personId: Id) => `${alertId}:${personId}`;
 const phoneIndex = new Map<string, { alertId: Id; personId: Id }>();
 const normPhone = (p: string) => p.replace(/\D/g, "").slice(-10);
 
-// People who asked us to stop calling. ponytail: in-memory only — resets on restart; needs a do_not_contact column in the DB.
-const doNotCall = new Set<string>();
 
 // Outcomes where we didn't actually reach the person → logged as no_answer so the queue retries.
 const NOT_REACHED: CallOutcome[] = ["voicemail", "wrong_person", "no_answer"];
@@ -42,10 +40,12 @@ async function welfareIfExhausted(alertId: Id, personId: Id) {
   const n = await countUnreached(alertId, personId);
   if (n < maxAttempts()) return;
   const current = await getTriage(alertId, personId);
-  if (current && current.status !== "unreached") return; // reached some other way (text, earlier call)
+  // The DB trigger may already have flipped them to 'exhausted' when this attempt was closed — that still qualifies.
+  if (current && !["unreached", "exhausted"].includes(current.status)) return; // reached some other way
   const ctx = await personContext(personId, alertId);
+  // Stay 'exhausted' (dashboard: "Couldn't reach") but with urgency + a pending welfare-check escalation.
   const t = await applyTriage(alertId, personId, {
-    status: "needs_help", urgency_score: welfareUrgency(ctx.profile ?? ctx.person ?? {}), emergency_type: "unreachable",
+    status: "exhausted", urgency_score: welfareUrgency(ctx.profile ?? ctx.person ?? {}), emergency_type: "unreachable",
     needs: ["welfare check"], location_in_home: null, notes: `Unreachable after ${n} call attempts; welfare check requested`,
   });
   await welfareEscalation(ctx, t, alertId, personId, n);
@@ -64,7 +64,7 @@ export const textsEnabled = () => process.env.TEXTS_ENABLED === "true";
 
 export async function contactPerson(alertId: Id, personId: Id, requested: Channel) {
   if (isInFlight(alertId, personId)) return { status: "skipped", detail: "contact already in progress" };
-  if (doNotCall.has(key(alertId, personId))) return { status: "skipped", detail: "person asked us to stop calling" };
+  if ((await getTriage(alertId, personId))?.do_not_contact) return { status: "skipped", detail: "person asked us to stop calling" };
   const channel: Channel = requested === "sms" && !textsEnabled() ? "voice" : requested;
 
   const ctx = await personContext(personId, alertId);
@@ -148,7 +148,7 @@ export async function handleCallEnded(r: CallResult) {
   await finishAttempt(attemptId, reached ? "completed" : "no_answer");
   const note = OUTCOME_NOTE[outcome] ?? (!r.answered ? "No answer — will retry (marked exhausted after 4 attempts)" : null);
   if (note) await logAgent({ alertId, personId, agent: "coordinator", tool: "get_call_result", thought: note, output: { outcome } });
-  if (outcome === "opt_out") doNotCall.add(key(alertId, personId));
+  if (outcome === "opt_out") await setDoNotContact(alertId, personId);
   if (outcome === "silent") {
     // Unresponsive on a live line is the strongest "not okay" signal we get. Escalation is pending_review, so a human confirms.
     await markCriticalNow(alertId, personId, "Line answered but the caller stopped responding", ["unresponsive"]);

@@ -143,7 +143,7 @@ language sql stable as $$
            (select max(coalesce(c.ended_at, c.started_at)) from contact_attempts c
              where c.alert_id = p_alert_id and c.person_id = p.id) as last_try
     from triage t join policyholders p on p.id = t.person_id
-    where t.alert_id = p_alert_id and t.status = 'unreached'
+    where t.alert_id = p_alert_id and t.status = 'unreached' and not t.do_not_contact
       and not exists (select 1 from contact_attempts c
                       where c.alert_id = p_alert_id and c.person_id = p.id and c.status = 'in_progress')
   )
@@ -240,6 +240,7 @@ create or replace function alert_stats(p_alert_id int) returns jsonb language sq
     'needs_help', count(*) filter (where t.status = 'needs_help'),
     'critical',   count(*) filter (where t.status = 'critical'),
     'exhausted',  count(*) filter (where t.status = 'exhausted'),
+    'do_not_contact', count(*) filter (where t.do_not_contact),
     'on_call_now', (select count(*) from contact_attempts c where c.alert_id = p_alert_id and c.status = 'in_progress'),
     'attempts',    (select count(*) from contact_attempts c where c.alert_id = p_alert_id),
     'high_risk_hexes', (select count(*) from hex_risk(p_alert_id) r where r.risk >= 0.5),
@@ -255,6 +256,7 @@ create or replace function map_people_geojson(p_alert_id int) returns jsonb lang
     'properties', jsonb_build_object(
       'person_id', p.id, 'name', p.first_name || ' ' || p.last_name, 'status', t.status,
       'urgency_score', t.urgency_score, 'attempts', failed_attempts(p_alert_id, p.id),
+      'do_not_contact', t.do_not_contact,
       'on_call', exists (select 1 from contact_attempts c where c.alert_id = p_alert_id
                                                        and c.person_id = p.id and c.status = 'in_progress'))
   )), '[]'))

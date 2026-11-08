@@ -66,6 +66,7 @@ create table triage (
   needs             text[] not null default '{}',
   location_in_home  text,
   notes             text not null default '',
+  do_not_contact    boolean not null default false,   -- caller asked us to stop calling (never re-queued)
   updated_at        timestamptz not null default now(),
   primary key (alert_id, person_id)
 );

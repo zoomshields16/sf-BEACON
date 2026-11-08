@@ -53,6 +53,11 @@ begin
   update triage set status = 'critical', urgency_score = 95 where alert_id = 1 and person_id = 1;
   assert (select count(*) from hazard_reports where source = 'call') = n + 1, 'critical triage did not create a hazard report';
 
+  -- opt-out (do_not_contact) is never re-queued
+  update triage set do_not_contact = true where alert_id = 1 and person_id = 2;
+  assert not exists (select 1 from call_queue(1, 5000) where person_id = 2), 'do_not_contact person is still queued';
+  assert (alert_stats(1)->>'do_not_contact')::int = 1, 'alert_stats do_not_contact count wrong';
+
   -- one open escalation per person
   insert into escalations (alert_id, person_id, reason, payload) values (1, 1, 'test', '{}');
   begin
