@@ -118,6 +118,13 @@ function stats() {
 export function mockRequest(method: string, path: string, _body?: unknown): any {
   const m = (re: RegExp) => path.match(re);
   if (path === "/health") return { ok: true, db: true, mock: true, nemotron: true };
+  if (path === "/api/alerts") return [
+    { id: 1, nws_id: "demo-ffw-houston-1", event_type: "Flash Flood Warning", headline: null, severity: "Severe", area_desc: "Harris, TX",
+      status: active ? "active" : "pending", expires: null, source: "demo", people_inside: people.length },
+    { id: 2, nws_id: "urn:oid:demo", event_type: "Flood Watch", headline: null, severity: "Severe", area_desc: "La Salle; McMullen; Live Oak",
+      status: "pending", expires: null, source: "nws", people_inside: 0 },
+  ];
+  if (path === "/api/alerts/nws/sync") return { fetched: 3, stored: [], alerts: mockRequest("GET", "/api/alerts") };
   if (m(/\/stats$/)) return stats();
   if (m(/\/map\/people$/)) return { type: "FeatureCollection", features: people.map((p) => ({ type: "Feature",
     geometry: { type: "Point", coordinates: [p.lon, p.lat] },

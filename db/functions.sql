@@ -27,6 +27,25 @@ create or replace function upsert_nws_alert(
   returning id
 $$;
 
+-- Alert picker for the dashboard: every non-ended alert with how many policyholders live inside it.
+-- Expired NWS alerts are ended first (the hand-made demo alert never expires).
+create or replace function alerts_overview()
+returns table (id int, nws_id text, event_type text, headline text, severity text, urgency text, area_desc text,
+               status text, expires timestamptz, source text, people_inside int)
+language plpgsql as $$
+begin
+  update alerts a set status = 'ended'
+  where a.status = 'pending' and a.expires < now() and a.nws_id not like 'demo-%';
+
+  return query
+  select a.id, a.nws_id, a.event_type, a.headline, a.severity, a.urgency, a.area_desc, a.status, a.expires,
+         case when a.nws_id like 'demo-%' then 'demo' else 'nws' end,
+         (select count(*) from policyholders p where ST_Covers(a.geom, p.geom))::int
+  from alerts a
+  where a.status <> 'ended'
+  order by (a.status = 'active') desc, 11 desc, a.id;
+end $$;
+
 -- Start an alert: mark active, create an 'unreached' triage row for everyone inside it,
 -- and build the hexagon risk grid. Safe to call twice.
 create or replace function activate_alert(p_alert_id int) returns jsonb language plpgsql as $$

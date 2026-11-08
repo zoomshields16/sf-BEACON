@@ -12,7 +12,7 @@ values (1, 'demo-ffw-houston-1', 'Flash Flood Warning',
     -95.505 29.712, -95.470 29.722, -95.440 29.716, -95.410 29.724, -95.385 29.716,
     -95.372 29.700, -95.382 29.680, -95.410 29.668, -95.445 29.664, -95.480 29.670,
     -95.506 29.686, -95.505 29.712))', 4326)),
-  now() - interval '30 minutes', now() + interval '6 hours');
+  now() - interval '30 minutes', now() + interval '48 hours');  -- outlives the hackathon
 select setval('alerts_id_seq', (select max(id) from alerts));
 
 -- ───────────── policyholders ─────────────

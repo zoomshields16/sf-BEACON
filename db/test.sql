@@ -79,7 +79,11 @@ begin
   n := upsert_nws_alert('test-nws-1', 'Tornado Warning', 'h', 'd', 'Extreme', 'Immediate', 'Dallas, TX',
          '{"type":"Polygon","coordinates":[[[-96.9,32.7],[-96.7,32.7],[-96.7,32.9],[-96.9,32.7]]]}', now(), now() + interval '1 hour');
   assert upsert_nws_alert('test-nws-1', 'Tornado Warning', 'h2', 'd', 'Extreme', 'Immediate', 'Dallas, TX',
-         '{"type":"Polygon","coordinates":[[[-96.9,32.7],[-96.7,32.7],[-96.7,32.9],[-96.9,32.7]]]}', now(), now()) = n, 'upsert created a duplicate';
+         '{"type":"Polygon","coordinates":[[[-96.9,32.7],[-96.7,32.7],[-96.7,32.9],[-96.9,32.7]]]}', now(), now() + interval '1 hour') = n, 'upsert created a duplicate';
+  -- overview: the demo alert lists its people; the Dallas test alert has none of our (Houston) policyholders
+  assert (select people_inside from alerts_overview() where nws_id = 'demo-ffw-houston-1') = inside, 'overview count wrong for demo alert';
+  assert (select people_inside from alerts_overview() where nws_id = 'test-nws-1') = 0, 'Dallas alert should cover nobody';
+  assert (select source from alerts_overview() where nws_id = 'test-nws-1') = 'nws', 'NWS alert source wrong';
   delete from alerts where nws_id = 'test-nws-1';
 
   -- reset wipes everything for the demo

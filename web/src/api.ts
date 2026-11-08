@@ -16,6 +16,19 @@ export interface LogEntry {
   created_at: string;
 }
 
+export interface AlertSummary {
+  id: number;
+  nws_id: string | null;
+  event_type: string;
+  headline: string | null;
+  severity: string | null;
+  area_desc: string | null;
+  status: "pending" | "active" | "ended";
+  expires: string | null;
+  source: "demo" | "nws";
+  people_inside: number;
+}
+
 export interface Escalation {
   id: number;
   person_id: string | number;
@@ -40,6 +53,8 @@ const get = <T>(p: string) => request<T>("GET", p);
 const post = <T>(p: string, b?: unknown) => request<T>("POST", p, b ?? {});
 
 export const api = {
+  alerts: () => get<AlertSummary[]>(`/api/alerts`),
+  nwsSync: () => post<{ fetched: number; stored: unknown[]; alerts: AlertSummary[] }>(`/api/alerts/nws/sync`),
   health: () => get<{ ok: boolean; db: boolean; mock: boolean; nemotron: boolean }>("/health"),
   stats: (a: string) => get<Json>(`/api/alerts/${a}/stats`),
   people: (a: string) => get<Json>(`/api/alerts/${a}/map/people`),

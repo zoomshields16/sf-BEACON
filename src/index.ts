@@ -6,6 +6,7 @@ import { dashboard } from "./routes/dashboard.js";
 import { webhooks } from "./routes/webhooks.js";
 import { internal } from "./routes/internal.js";
 import { nemotronEnabled } from "./agents/nemotron.js";
+import { startNwsPolling } from "./services/nws.js";
 
 const app = express();
 app.use(express.json());
@@ -36,5 +37,6 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 const port = Number(process.env.PORT ?? 3000);
+startNwsPolling();
 app.listen(port, () =>
   console.log(`SF-SafeNet API on http://localhost:${port}  (mock=${process.env.MOCK_CALLS === "true"}, nemotron=${nemotronEnabled()})`));

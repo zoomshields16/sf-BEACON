@@ -33,6 +33,24 @@ export default function App() {
   }, []);
 
   const health = usePoll(() => api.health(), 10000, []);
+  const [alertsVersion, setAlertsVersion] = useState(0);
+  const alertList = usePoll(() => api.alerts(), 30000, [alertsVersion]);
+  const [nwsBusy, setNwsBusy] = useState(false);
+  const checkNws = async () => {
+    setNwsBusy(true);
+    try {
+      const r = await api.nwsSync();
+      const hit = r.alerts.filter((a) => a.source === "nws" && a.people_inside > 0);
+      notify(hit.length
+        ? `NWS: ${hit.length} live alert(s) cover ${hit.reduce((n, a) => n + a.people_inside, 0)} policyholders`
+        : `NWS: ${r.fetched} live alert(s) in the area — none cover our policyholders right now`);
+      setAlertsVersion((v) => v + 1);
+    } catch (e) {
+      notify(`NWS check failed: ${(e as Error).message}`);
+    } finally {
+      setNwsBusy(false);
+    }
+  };
   const stats = usePoll(() => api.stats(alertId), 2500, [alertId]);
   const people = usePoll(() => api.people(alertId), 3000, [alertId]);
   const hex = usePoll(() => api.hex(alertId), 5000, [alertId]);
@@ -80,10 +98,20 @@ export default function App() {
           </div>
         </div>
 
-        <form className="alert-picker" onSubmit={(e) => { e.preventDefault(); setAlertId(draftAlert.trim()); setSelected(null); }}>
+        <div className="alert-picker">
           <label>Alert</label>
-          <input value={draftAlert} onChange={(e) => setDraftAlert(e.target.value)} />
-        </form>
+          <select value={alertId} onChange={(e) => { setAlertId(e.target.value); setDraftAlert(e.target.value); setSelected(null); }}>
+            {!(alertList.data ?? []).some((a) => String(a.id) === alertId) && <option value={alertId}>#{alertId}</option>}
+            {(alertList.data ?? []).map((a) => (
+              <option key={a.id} value={String(a.id)}>
+                {a.source === "nws" ? "NWS · " : ""}{a.event_type} — {(a.area_desc ?? "").slice(0, 32)} · {a.people_inside.toLocaleString()} policyholders{a.status === "active" ? " · ACTIVE" : ""}
+              </option>
+            ))}
+          </select>
+          <button className="btn" disabled={nwsBusy} onClick={checkNws} title="Pull live alerts from the National Weather Service">
+            {nwsBusy ? "Checking NWS…" : "Check NWS"}
+          </button>
+        </div>
 
         <div className="chips">
           {MOCK && <span className="chip chip-warn">DEMO DATA</span>}

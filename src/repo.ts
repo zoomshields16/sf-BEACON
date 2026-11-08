@@ -25,6 +25,8 @@ const DB_FUNCTIONS = new Set([
   "map_hex_geojson",
   "simulate_reports",
   "reset_demo",
+  "upsert_nws_alert",
+  "alerts_overview",
 ]);
 
 /** Calls a whitelisted SQL function with parameterized args. Unwraps single scalar/json results. */
@@ -41,6 +43,19 @@ async function fn(name: string, args: unknown[]): Promise<any> {
 
 export const activateAlert = (alertId: Id) => fn("activate_alert", [alertId]);
 export const resetDemo = (alertId: Id) => fn("reset_demo", [alertId]);
+/** All non-ended alerts (demo + NWS) with how many policyholders live inside each. */
+export const alertsOverview = async (): Promise<Row[]> => {
+  const r = await fn("alerts_overview", []);
+  return Array.isArray(r) ? r : [r];
+};
+
+export interface NwsAlertInput {
+  nwsId: string; eventType: string; headline?: string; description?: string; severity?: string;
+  urgency?: string; areaDesc?: string; geometry: unknown; onset?: string | null; expires?: string | null;
+}
+export const upsertNwsAlert = async (a: NwsAlertInput): Promise<number> =>
+  Number(await fn("upsert_nws_alert", [a.nwsId, a.eventType, a.headline ?? null, a.description ?? null, a.severity ?? null,
+    a.urgency ?? null, a.areaDesc ?? null, JSON.stringify(a.geometry), a.onset ?? null, a.expires ?? null]));
 export const callQueue = (alertId: Id, limit: number): Promise<Row[]> => fn("call_queue", [alertId, limit]);
 export const personContext = (personId: Id, alertId: Id): Promise<Row> => fn("person_context", [personId, alertId]);
 export const alertStats = async (alertId: Id) => {
