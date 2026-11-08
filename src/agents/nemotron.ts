@@ -2,12 +2,14 @@ import OpenAI from "openai";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
 import { logAgent, type AgentLogEntry, type Id } from "../repo.js";
 
-export const nemotronEnabled = () => Boolean(process.env.NVIDIA_API_KEY && process.env.NEMOTRON_MODEL);
+// NEMOTRON_API_KEY = key for a Brev/self-hosted endpoint; falls back to the build.nvidia.com key.
+const apiKey = () => process.env.NEMOTRON_API_KEY || process.env.NVIDIA_API_KEY;
+export const nemotronEnabled = () => Boolean(apiKey() && process.env.NEMOTRON_MODEL);
 
 let client: OpenAI | null = null;
 function getClient() {
   client ??= new OpenAI({
-    apiKey: process.env.NVIDIA_API_KEY,
+    apiKey: apiKey(),
     // Hosted API by default; point at a Nemotron NIM on Brev with NEMOTRON_BASE_URL.
     baseURL: process.env.NEMOTRON_BASE_URL || "https://integrate.api.nvidia.com/v1",
     timeout: 30_000,

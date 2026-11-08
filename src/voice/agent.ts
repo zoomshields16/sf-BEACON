@@ -170,7 +170,7 @@ export default defineAgent({
       llm: new openai.LLM({
         model: process.env.NEMOTRON_MODEL ?? "nemotron",
         baseURL: process.env.NEMOTRON_BASE_URL ?? "https://integrate.api.nvidia.com/v1",
-        apiKey: process.env.NVIDIA_API_KEY ?? "unused",
+        apiKey: process.env.NEMOTRON_API_KEY || process.env.NVIDIA_API_KEY || "unused",
       }),
     });
     vsession.on(voice.AgentSessionEventTypes.UserStateChanged, (ev) => {
