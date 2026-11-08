@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "BEACON",
+    "name": "sf-BEACON",
     "slug": "beacon",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -10,7 +10,7 @@
     "ios": {
       "icon": "./assets/expo.icon",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "BEACON uses your registered home address to show weather around your home. During an emergency check-in it also shares your precise location with responders."
+        "NSLocationWhenInUseUsageDescription": "sf-BEACON uses your registered home address to show weather around your home. During an emergency check-in it also shares your precise location with responders."
       }
     },
     "android": {

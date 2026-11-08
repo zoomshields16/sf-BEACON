@@ -54,7 +54,7 @@ export default function Onboarding() {
             <MaterialCommunityIcons name="lighthouse-on" size={26} color={color.red} />
           </View>
           <T v="title" c={color.white} style={{ marginTop: space.lg, letterSpacing: 3 }}>
-            BEACON
+            sf-BEACON
           </T>
           <T v="caption" c="#FFD9D4" style={{ marginTop: 2 }}>
             State Farm Basic Emergency Assistance & Cognitive Outreach Network

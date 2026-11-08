@@ -1,4 +1,4 @@
-# BEACON demo runbook (phone app + control panel)
+# sf-BEACON demo runbook (phone app + control panel)
 
 **Flow:** control panel on the laptop → alert over a circle → every app user inside gets a push → they check in on the phone →
 no answer in 30 s → the voice agent calls them. "I need help" creates a 911 escalation (pending human review) that includes the

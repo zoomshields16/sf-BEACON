@@ -8,7 +8,7 @@ const running = new Set<string>();
 const autopilots = new Map<string, NodeJS.Timeout>();
 const lastHotHexes = new Map<string, string>();
 
-export const SYSTEM = `You are the dispatch coordinator for State Farm BEACON during a disaster.
+export const SYSTEM = `You are the dispatch coordinator for sf-BEACON during a disaster.
 Goal: reach every policyholder inside the alert, most urgent first, and make sure no one is overlooked.
 Each round:
 1. Call get_call_queue (and get_hex_risk if risk changed). Each row already has priority, hex_risk and reasons —

@@ -24,7 +24,7 @@ export default function Today() {
           <MaterialCommunityIcons name="lighthouse-on" size={17} color={color.white} />
         </View>
         <T v="heading" style={{ flex: 1, letterSpacing: 1.5 }}>
-          BEACON
+          sf-BEACON
         </T>
       </View>
 

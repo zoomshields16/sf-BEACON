@@ -8,7 +8,7 @@ import {
 export function buildRapidSosPayload(ctx: Row, triage: TriageFields, reason: string) {
   return {
     provider: "RapidSOS (simulated)",
-    source: "State Farm BEACON",
+    source: "sf-BEACON",
     created_at: new Date().toISOString(),
     caller: { name: ctxName(ctx), phone: ctxPhone(ctx) ?? null },
     location: ctxLocation(ctx),

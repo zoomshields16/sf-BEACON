@@ -1,4 +1,4 @@
-"""Step 3 — train the BEACON Risk Classifier with PyTorch Lightning on Nemotron embeddings.
+"""Step 3 — train the sf-BEACON Risk Classifier with PyTorch Lightning on Nemotron embeddings.
 
   ml/.venv/bin/python ml/train.py   → ml/model/risk_classifier.json (weights for the TypeScript runtime) + metrics.json
 

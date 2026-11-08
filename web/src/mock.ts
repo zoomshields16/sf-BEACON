@@ -91,7 +91,7 @@ function step() {
           { channel, role: "user", content: a, created_at: now() }));
         if (kind === "critical") p.history.push({ channel, role: "agent", content: "Please hang up and call 911 now. I'm also alerting emergency responders.", created_at: now() });
       } else {
-        p.history.push({ channel, role: "agent", content: "State Farm BEACON: are you and everyone in your home safe right now? Reply SAFE or HELP. If you're in immediate danger, call 911.", created_at: now() },
+        p.history.push({ channel, role: "agent", content: "sf-BEACON: are you and everyone in your home safe right now? Reply SAFE or HELP. If you're in immediate danger, call 911.", created_at: now() },
           { channel, role: "user", content: s.answers[s.answers.length - 1], created_at: now() });
       }
       Object.assign(p, { status: kind, urgency: s.urgency, needs: s.needs, notes: s.notes });
@@ -163,8 +163,8 @@ export function mockRequest(method: string, path: string, _body?: unknown): any 
   if (contact) {
     const p = people.find((x) => x.id === Number(contact[1]))!;
     const prior = [...p.history].reverse().find((h) => h.role === "user");
-    const text = prior ? `State Farm BEACON: On our call you said "${prior.content}" Is that still the case? Reply SAFE or HELP. If you're in immediate danger, call 911.`
-                       : "State Farm BEACON: are you and everyone in your home safe right now? Reply SAFE or HELP.";
+    const text = prior ? `sf-BEACON: On our call you said "${prior.content}" Is that still the case? Reply SAFE or HELP. If you're in immediate danger, call 911.`
+                       : "sf-BEACON: are you and everyone in your home safe right now? Reply SAFE or HELP.";
     p.history.push({ channel: "sms", role: "agent", content: text, created_at: now() });
     addLog("triage", prior ? "Composed follow-up text referencing the call" : "Composed check-in text", "send_text", p.id, { text });
     return { status: "started" };

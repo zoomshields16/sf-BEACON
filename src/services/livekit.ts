@@ -1,5 +1,5 @@
 // Outbound calls: LiveKit dials the policyholder through the Photon SIP trunk, and once they answer
-// we dispatch the BEACON agent (src/voice/agent.ts) into the room.
+// we dispatch the sf-BEACON agent (src/voice/agent.ts) into the room.
 import { AgentDispatchClient, RoomServiceClient, SipClient } from "livekit-server-sdk";
 import type { CallScript } from "../agents/triage.js";
 import { logAgent, type Id, type Row } from "../repo.js";

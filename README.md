@@ -1,6 +1,8 @@
-# SF-BEACON
+# sf-BEACON
 
-**AI disaster check-in calls, at scale.** When a severe-weather alert hits, SF-BEACON finds every policyholder inside the
+**State Farm Basic Emergency Assistance & Cognitive Outreach Network** — AI disaster check-in calls, at scale.
+
+When a severe-weather alert hits, sf-BEACON finds every policyholder inside the
 alert area, ranks who is most at risk, and **calls them** with a calm, human-sounding voice agent powered by
 **NVIDIA Nemotron** — so no one is overlooked on the worst day.
 

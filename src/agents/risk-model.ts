@@ -1,4 +1,4 @@
-// BEACON Risk Classifier — PyTorch Lightning MLP trained on Nemotron embeddings of synthetic caller lines (see ml/).
+// sf-BEACON Risk Classifier — PyTorch Lightning MLP trained on Nemotron embeddings of synthetic caller lines (see ml/).
 // Runs here in TypeScript from exported weights (no Python at demo time). It is a THIRD opinion next to the keyword
 // scan and Nemotron: it never triggers the 911 line itself — disagreements go to a human (urgent assistance queue).
 import { existsSync, readFileSync } from "node:fs";

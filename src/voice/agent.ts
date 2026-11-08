@@ -30,7 +30,7 @@ async function api<T = any>(path: string, body?: unknown): Promise<T> {
 const testSession = (): CallSession => ({
   alertId: null, personId: null, attemptId: null, ctx: {},
   script: {
-    opening: "Hi, this is the State Farm BEACON assistant checking on you during the emergency in your area.",
+    opening: "Hi, this is the sf-BEACON assistant from State Farm, checking on you during the emergency in your area.",
     questions: [...CORE_QUESTIONS, "Do you have power, water, and any medications you need?"],
     closing: "Thank you. If anything changes or you are in danger, call 911.",
     source: "fallback",
@@ -46,7 +46,9 @@ function lastUserText(chatCtx: llm.ChatContext): string {
 }
 
 /** Text as the TTS should pronounce it ("911" → "nine-one-one", not "nine hundred eleven"). Transcript keeps the original. */
-export const speakable = (text: string) => text.replace(/\b9-?1-?1\b/g, "nine-one-one");
+// sf-BEACON is written all-caps (an acronym) — say it as a word, not letter by letter.
+export const speakable = (text: string) =>
+  text.replace(/\b9-?1-?1\b/g, "nine-one-one").replace(/\bsf-BEACON\b/gi, "S.F. Beacon");
 
 function userTurnCount(chatCtx: llm.ChatContext): number {
   return chatCtx.items.filter((i: any) => i?.type === "message" && i.role === "user").length;
@@ -56,7 +58,7 @@ class SafeNetCaller extends voice.Agent {
   readonly transcript: Turn[] = [];
 
   constructor(private brain: CallBrain, private hangup: () => Promise<void>) {
-    super({ instructions: "State Farm BEACON disaster check-in caller. Replies are produced by CallBrain." });
+    super({ instructions: "sf-BEACON disaster check-in caller. Replies are produced by CallBrain." });
   }
 
   /** Speak via session.say (used for the opening and for final lines, so we can hang up after playout). */

@@ -1,4 +1,4 @@
-# SF-BEACON API
+# sf-BEACON API
 Base URL `http://localhost:3000`. JSON in/out. The dashboard dev server proxies `/api` and `/health` (see `web/vite.config.ts`). CORS is open.
 
 | Method | Path | Returns / body |

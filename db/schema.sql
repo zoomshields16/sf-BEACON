@@ -1,4 +1,4 @@
--- BEACON schema. Run order: schema.sql → functions.sql → seed.sql
+-- sf-BEACON schema. Run order: schema.sql → functions.sql → seed.sql
 -- Re-runnable: drops and recreates everything (demo database, no migrations).
 create extension if not exists postgis;
 
@@ -22,7 +22,7 @@ create table policyholders (
   mobility_limited  boolean not null default false,
   pets              text,                                 -- e.g. '2 dogs'
   language          text not null default 'en',
-  push_token        text,                          -- Expo push token of the BEACON app (null = no app)
+  push_token        text,                          -- Expo push token of the sf-BEACON app (null = no app)
   last_lat          double precision,              -- last precise phone location from the app (sent to 911 on escalation)
   last_lng          double precision,
   last_seen         timestamptz,

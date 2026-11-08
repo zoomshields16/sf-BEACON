@@ -1,4 +1,4 @@
-// BEACON backend client. On a real phone set EXPO_PUBLIC_API_URL to your computer's LAN address, e.g. http://192.168.1.20:3000
+// sf-BEACON backend client. On a real phone set EXPO_PUBLIC_API_URL to your computer's LAN address, e.g. http://192.168.1.20:3000
 export const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
 
 async function post<T>(path: string, body: unknown): Promise<T> {

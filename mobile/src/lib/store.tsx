@@ -228,7 +228,7 @@ function reducer(s: AppState, a: Action): AppState {
       return { ...s, safeRooms: [...s.safeRooms, ...added] };
     }
     case 'serverAlerts': {
-      // Alerts from the BEACON backend replace the ones we got last time; ones that vanished have ended.
+      // Alerts from the sf-BEACON backend replace the ones we got last time; ones that vanished have ended.
       const incoming = new Map(a.alerts.map((x) => [x.id, x]));
       const kept = s.alerts.flatMap((x) => {
         if (!x.id.startsWith('srv-')) return [x];
@@ -273,14 +273,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   };
 
   // Connection status shown on the Today screen, so "nothing arrives" always has a visible reason.
-  const [link, setLink] = useState<Link>({ ok: false, msg: 'Connecting to BEACON…' });
-  const unreachable = { ok: false, msg: `Can't reach the BEACON server (${API_URL.split('//').pop()}). Check the tunnel address, then restart Expo with --clear.` };
+  const [link, setLink] = useState<Link>({ ok: false, msg: 'Connecting to sf-BEACON…' });
+  const unreachable = { ok: false, msg: `Can't reach the sf-BEACON server (${API_URL.split('//').pop()}). Check the tunnel address, then restart Expo with --clear.` };
 
   // Tell the backend who this is (creates the policyholder). Called when the profile changes and again whenever sync says we are unknown.
   const registerNow = async () => {
     const cur = latest.current;
     const phone = toE164(cur.user.phone);
-    if (!phone) return setLink({ ok: false, msg: 'Add your full 10-digit phone number in Profile so BEACON can reach you.' });
+    if (!phone) return setLink({ ok: false, msg: 'Add your full 10-digit phone number in Profile so sf-BEACON can reach you.' });
     let { lat, lng } = cur.home;
     if (lat == null || lng == null) {
       const c = await geocodeHome(cur.home);
@@ -304,17 +304,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const phone = toE164(state.user.phone);
     if (!ready || !state.onboarded) return;
-    if (!phone) return setLink({ ok: false, msg: 'Add your full 10-digit phone number in Profile so BEACON can reach you.' });
+    if (!phone) return setLink({ ok: false, msg: 'Add your full 10-digit phone number in Profile so sf-BEACON can reach you.' });
     let stop = false;
     const tick = () =>
       syncAlerts(phone)
         .then((r) => {
           if (stop) return;
           if (r.linked) {
-            setLink({ ok: true, msg: 'Connected to BEACON. Alerts for your home will appear here.' });
+            setLink({ ok: true, msg: 'Connected to sf-BEACON. Alerts for your home will appear here.' });
             rawDispatch({ type: 'serverAlerts', alerts: r.alerts });
           } else {
-            setLink({ ok: false, msg: 'Registering with BEACON…' });
+            setLink({ ok: false, msg: 'Registering with sf-BEACON…' });
             registerNow().catch(() => setLink(unreachable));
           }
         })

@@ -8,7 +8,7 @@ const PLACES: [string, number, number, string][] = [
   ["Harris County, TX (Houston)", 29.7, -95.45, "Harris County"],
 ];
 
-/** Control panel: pick an event and an area, and every BEACON app user inside gets a push notification. */
+/** Control panel: pick an event and an area, and every sf-BEACON app user inside gets a push notification. */
 export function SendAlert({ onSent, notify }: { onSent: (alertId: string) => void; notify: (m: string) => void }) {
   const [open, setOpen] = useState(false);
   const [users, setUsers] = useState<{ id: number; name: string; address: string; lat: number; lng: number }[]>([]);

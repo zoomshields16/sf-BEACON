@@ -35,7 +35,7 @@ const CASES: [string, boolean][] = [
 
 const runs = Number(process.argv[2] ?? 2);
 const ctx = { profile: { first_name: "Alex", age: 68, household_size: 3 }, alert: { event_type: "Flash Flood Warning" }, history: [] };
-const script = { opening: "Hi Alex, this is the State Farm BEACON assistant.", questions: [...CORE_QUESTIONS], closing: "Thank you.", source: "fallback" as const };
+const script = { opening: "Hi Alex, this is the sf-BEACON assistant.", questions: [...CORE_QUESTIONS], closing: "Thank you.", source: "fallback" as const };
 
 let tp = 0, tn = 0, fp = 0, fn = 0;
 const misses: string[] = [];

@@ -1,4 +1,4 @@
-// Endpoints for the BEACON phone app. The app identifies the policyholder by phone number (demo-grade; no auth).
+// Endpoints for the sf-BEACON phone app. The app identifies the policyholder by phone number (demo-grade; no auth).
 import { Router } from "express";
 import {
   activateAlert, activeAlertsForPerson, appUsers, endOldDemoAlerts, getTriage, logAgent, personByPhone, pushTokensInAlert, registerPerson, saveLocation,
@@ -52,7 +52,7 @@ mobile.post("/send-alert", async (req, res) => {
   const alertId = await upsertNwsAlert({
     nwsId: `demo-app-${Date.now()}`, eventType: String(event_type), areaDesc: String(area), severity: "Severe", urgency: "Immediate",
     headline: `${event_type} for ${area} until ${new Date(Date.now() + 3600_000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`,
-    description: "Take shelter now. Check in on your BEACON app.", geometry: circle(lat, lng, km),
+    description: "Take shelter now. Check in on your sf-BEACON app.", geometry: circle(lat, lng, km),
     onset: new Date().toISOString(), expires: new Date(Date.now() + 3600_000).toISOString(),
   });
   await endOldDemoAlerts(alertId); // only the newest control-panel alert stays live
@@ -60,7 +60,7 @@ mobile.post("/send-alert", async (req, res) => {
   await logAgent({ alertId, agent: "system", thought: `${event_type} sent from the control panel — triage rows created`, output: result });
   if (autopilot) startAutopilot(alertId);
   const tokens = await pushTokensInAlert(alertId);
-  const pushed = await sendPush(tokens, String(event_type), `${area}. Open BEACON and check in.`, { alertId }).catch((e) => { console.error(e); return 0; });
+  const pushed = await sendPush(tokens, String(event_type), `${area}. Open sf-BEACON and check in.`, { alertId }).catch((e) => { console.error(e); return 0; });
   res.json({ ok: true, alertId, result, pushed });
 });
 
@@ -102,18 +102,18 @@ mobile.post("/checkin", async (req, res) => {
   if (!triage) return res.status(404).json({ error: "not part of this alert" });
 
   if (status === "help") {
-    await markCriticalNow(alertId, person.id, "Tapped 'I need help' in the BEACON app", ["app_help_request"]);
+    await markCriticalNow(alertId, person.id, "Tapped 'I need help' in the sf-BEACON app", ["app_help_request"]);
   } else if (status === "no-response") {
     if (triage.status === "safe") return res.json({ status: "skipped", detail: "already checked in" });
     // The 30 s check-in timer ran out → the voice agent calls them.
-    await logAgent({ alertId, personId: person.id, agent: "system", thought: "No answer in the BEACON app — placing the safety call" });
+    await logAgent({ alertId, personId: person.id, agent: "system", thought: "No answer in the sf-BEACON app — placing the safety call" });
     return res.json(await contactPerson(alertId, person.id, "voice"));
   } else if (status === "safe" || status === "saferoom") {
     if (triage.status !== "critical") { // a human clears critical cases, never the app
       await updateTriage(alertId, person.id, {
         status: "safe", urgency_score: 0, emergency_type: null, needs: [],
         location_in_home: status === "saferoom" ? String(room ?? "safe room") : null,
-        notes: `Checked in from the BEACON app (${status === "saferoom" ? "in safe room" : "safe"})`,
+        notes: `Checked in from the sf-BEACON app (${status === "saferoom" ? "in safe room" : "safe"})`,
       } as any);
       await logAgent({ alertId, personId: person.id, agent: "triage", thought: `App check-in: ${status}` });
     }

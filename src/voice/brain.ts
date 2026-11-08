@@ -210,7 +210,7 @@ export class CallBrain {
       return { reply: { say: `Sorry about that — I'll speak clearly. ${this.lastAsked}`, endCall: false } };
     }
     if (NON_ANSWER.test(lastUser) && this.lastAsked) {
-      return { reply: { say: `This is the State Farm BEACON assistant, checking on your safety. ${this.lastAsked}`, endCall: false } };
+      return { reply: { say: `This is the sf-BEACON assistant from State Farm, checking on your safety. ${this.lastAsked}`, endCall: false } };
     }
 
     // (1) Fixed safety questions, verbatim, with a short Nemotron acknowledgement.
@@ -237,7 +237,7 @@ export class CallBrain {
       const planned = this.s.script.questions.slice(CORE_QUESTIONS.length);
       const llm = !this.useModel ? null : await withTimeout(
         chatJSON(
-          `You are the State Farm BEACON assistant on a LIVE phone call with a policyholder during a disaster.
+          `You are the sf-BEACON assistant on a LIVE phone call with a policyholder during a disaster.
 The fixed safety questions are done. Now ask at most ${MAX_FOLLOWUPS - this.followups} more short follow-up question(s), ONE per turn,
 responding naturally to what they just said. Planned follow-ups (use, adapt, or skip): ${JSON.stringify(planned)}.
 Sound like a kind, calm human — natural and conversational, never robotic. Under 40 words.

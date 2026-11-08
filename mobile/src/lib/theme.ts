@@ -1,4 +1,4 @@
-// BEACON design tokens.
+// sf-BEACON design tokens.
 // One loud color (State Farm red) used for action and danger; everything else stays quiet.
 
 export const color = {

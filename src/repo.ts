@@ -203,7 +203,7 @@ export async function createEscalation(
   alertId: Id, personId: Id, reason: string, payload: unknown, kind: EscalationKind = "911",
 ): Promise<Id> {
   const rows = await query(
-    // The phone's last precise location (from the BEACON app) rides along in the payload, separate from the home address.
+    // The phone's last precise location (from the sf-BEACON app) rides along in the payload, separate from the home address.
     `insert into escalations (alert_id, person_id, kind, reason, payload, status)
      values ($1, $2, $3, $4, $5::jsonb || coalesce((select jsonb_build_object('live_location', jsonb_build_object(
                'lat', last_lat, 'lon', last_lng, 'as_of', last_seen)) from policyholders where id = $2 and last_lat is not null), '{}'::jsonb),
@@ -225,7 +225,7 @@ export const listEscalations = (alertId: Id) =>
 export const reviewEscalation = (escalationId: Id, status: "confirmed" | "dismissed") =>
   query(`update escalations set status = $2, reviewed_at = now() where id = $1 returning *`, [escalationId, status]);
 
-// ---------- mobile app (BEACON) ----------
+// ---------- mobile app (sf-BEACON) ----------
 const digits10 = (p: string) => p.replace(/\D/g, "").slice(-10);
 
 /** Policyholder whose phone matches (last 10 digits), or null. */

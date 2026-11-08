@@ -61,4 +61,4 @@ closeOrphanedAttempts()
   .then((n) => n && console.log(`[startup] closed ${n} call attempt(s) orphaned by a restart — those people are back in the queue`))
   .catch((e) => console.error("[startup] orphan cleanup failed:", e.message));
 app.listen(port, () =>
-  console.log(`BEACON API on http://localhost:${port}  (mock=${process.env.MOCK_CALLS === "true"}, nemotron=${nemotronEnabled()})`));
+  console.log(`sf-BEACON API on http://localhost:${port}  (mock=${process.env.MOCK_CALLS === "true"}, nemotron=${nemotronEnabled()})`));

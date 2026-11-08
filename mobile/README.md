@@ -1,6 +1,6 @@
-# BEACON (HackUTD 2026, State Farm track)
+# sf-BEACON (HackUTD 2026, State Farm track)
 
-**State Farm Basic Emergency Assistance & Cognitive Outreach Network.** The mobile frontend for BEACON. Built with Expo SDK 58, React Native and Expo Router, in TypeScript.
+**State Farm Basic Emergency Assistance & Cognitive Outreach Network.** The mobile frontend for sf-BEACON. Built with Expo SDK 58, React Native and Expo Router, in TypeScript.
 
 ## Run it on an iPhone
 
@@ -16,7 +16,7 @@ If the phone and laptop can't see each other (hackathon Wi-Fi often blocks this)
 
 ## Demo script for judges
 
-1. Fresh launch: **Get started**, enter a name and phone, tap **Connect with State Farm** (this fills in the address), confirm the address, answer the home questions (floors, basement, shelter, attic, garage) and pick the rooms that have no windows. BEACON then suggests a spot for each disaster; tap any one to change it or type your own. Finish with **Finish setup**.
+1. Fresh launch: **Get started**, enter a name and phone, tap **Connect with State Farm** (this fills in the address), confirm the address, answer the home questions (floors, basement, shelter, attic, garage) and pick the rooms that have no windows. sf-BEACON then suggests a spot for each disaster; tap any one to change it or type your own. Finish with **Finish setup**.
 2. **Today** tab: tap **Test alert** in the top right. This opens the full-screen tornado check-in with a 30-second countdown.
 3. Each choice leads somewhere different:
    - **I'm safe** or **I'm in my safe room** shows a green confirmation.
