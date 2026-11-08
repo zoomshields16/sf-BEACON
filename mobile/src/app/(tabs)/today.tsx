@@ -11,7 +11,7 @@ import { activeAlerts, readiness, roomFor, useStore } from '@/lib/store';
 import { color, radius, space } from '@/lib/theme';
 
 export default function Today() {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, link } = useStore();
   const alert = activeAlerts(state)[0];
   const ready = readiness(state);
   const firstName = state.user.name.split(' ')[0];
@@ -25,6 +25,13 @@ export default function Today() {
         </View>
         <T v="heading" style={{ flex: 1, letterSpacing: 1.5 }}>
           BEACON
+        </T>
+      </View>
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: space.md }}>
+        <View style={[st.dot, { backgroundColor: link.ok ? color.safe : color.red }]} />
+        <T v="caption" c={color.inkSoft} style={{ flex: 1 }}>
+          {link.msg}
         </T>
       </View>
 

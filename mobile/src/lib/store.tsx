@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, ReactNode, useContext, useEffect, useReducer, useRef, useState } from 'react';
 
-import { register, sendCheckIn, syncAlerts, toE164 } from './api';
+import { API_URL, register, sendCheckIn, syncAlerts, toE164 } from './api';
+import { geocodeHome } from './geocode';
 import { getPushToken, preciseLocation } from './device';
 import type { Hazard } from './hazards';
 import { HomeProfile, suggestionsFor } from './plan';
@@ -249,7 +250,8 @@ function reducer(s: AppState, a: Action): AppState {
 
 const KEY = 'beacon/state/v2';
 
-type Ctx = { state: AppState; dispatch: (a: Action) => void; ready: boolean };
+type Link = { ok: boolean; msg: string };
+type Ctx = { state: AppState; dispatch: (a: Action) => void; ready: boolean; link: Link };
 const StoreContext = createContext<Ctx | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -270,35 +272,57 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (phone) preciseLocation().then((loc) => sendCheckIn(phone, Number(a.alertId.slice(4)), status, room, loc)).catch(() => {});
   };
 
-  // Tell the backend who this is (creates the policyholder) whenever the profile changes.
+  // Connection status shown on the Today screen, so "nothing arrives" always has a visible reason.
+  const [link, setLink] = useState<Link>({ ok: false, msg: 'Connecting to BEACON…' });
+  const unreachable = { ok: false, msg: `Can't reach the BEACON server (${API_URL.split('//').pop()}). Check the tunnel address, then restart Expo with --clear.` };
+
+  // Tell the backend who this is (creates the policyholder). Called when the profile changes and again whenever sync says we are unknown.
+  const registerNow = async () => {
+    const cur = latest.current;
+    const phone = toE164(cur.user.phone);
+    if (!phone) return setLink({ ok: false, msg: 'Add your full 10-digit phone number in Profile so BEACON can reach you.' });
+    let { lat, lng } = cur.home;
+    if (lat == null || lng == null) {
+      const c = await geocodeHome(cur.home);
+      if (!c) return setLink({ ok: false, msg: 'Home location missing. Re-enter your address in Profile.' });
+      ({ lat, lng } = { lat: c.lat, lng: c.lng });
+    }
+    const pushToken = await getPushToken();
+    const hh = cur.household;
+    await register({
+      name: cur.user.name, phone, address: fullAddress(cur.home), lat: lat!, lng: lng!,
+      adults: hh.adults, children: hh.children, pets: hh.pets, needs: hh.needs, safeRoom: cur.safeRooms[0]?.room, pushToken,
+    });
+  };
   const h = state.home, hh = state.household;
   const profileKey = JSON.stringify([state.user.name, state.user.phone, h.street, h.city, h.lat, h.lng, hh, state.safeRooms[0]?.room]);
   useEffect(() => {
-    const phone = toE164(state.user.phone);
-    if (!ready || !state.onboarded || !phone || h.lat == null || h.lng == null) return;
-    getPushToken()
-      .then((pushToken) =>
-        register({
-          name: state.user.name, phone, address: fullAddress(h), lat: h.lat!, lng: h.lng!,
-          adults: hh.adults, children: hh.children, pets: hh.pets, needs: hh.needs, safeRoom: state.safeRooms[0]?.room, pushToken,
-        }),
-      )
-      .catch(() => {});
+    if (ready && state.onboarded) registerNow().catch(() => setLink(unreachable));
   }, [ready, state.onboarded, profileKey]);
 
   // Poll the backend for alerts covering this person's home.
   useEffect(() => {
     const phone = toE164(state.user.phone);
-    if (!ready || !phone) return;
+    if (!ready || !state.onboarded) return;
+    if (!phone) return setLink({ ok: false, msg: 'Add your full 10-digit phone number in Profile so BEACON can reach you.' });
     let stop = false;
     const tick = () =>
       syncAlerts(phone)
-        .then((r) => !stop && r.linked && rawDispatch({ type: 'serverAlerts', alerts: r.alerts }))
-        .catch(() => {});
+        .then((r) => {
+          if (stop) return;
+          if (r.linked) {
+            setLink({ ok: true, msg: 'Connected to BEACON. Alerts for your home will appear here.' });
+            rawDispatch({ type: 'serverAlerts', alerts: r.alerts });
+          } else {
+            setLink({ ok: false, msg: 'Registering with BEACON…' });
+            registerNow().catch(() => setLink(unreachable));
+          }
+        })
+        .catch(() => !stop && setLink(unreachable));
     tick();
     const id = setInterval(tick, 5000);
     return () => { stop = true; clearInterval(id); };
-  }, [ready, state.user.phone]);
+  }, [ready, state.onboarded, state.user.phone]);
 
   useEffect(() => {
     AsyncStorage.getItem(KEY)
@@ -316,7 +340,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (ready) AsyncStorage.setItem(KEY, JSON.stringify(state)).catch(() => {});
   }, [state, ready]);
 
-  return <StoreContext.Provider value={{ state, dispatch, ready }}>{children}</StoreContext.Provider>;
+  return <StoreContext.Provider value={{ state, dispatch, ready, link }}>{children}</StoreContext.Provider>;
 }
 
 export function useStore() {
