@@ -173,4 +173,8 @@ export default defineAgent({
 cli.runApp(new ServerOptions({
   agent: fileURLToPath(import.meta.url),
   agentName: process.env.LIVEKIT_AGENT_NAME ?? "safenet-caller",
+  // The job process loads this TypeScript file cold (slow on Windows/OneDrive); the 10 s default timed out and calls got no agent.
+  // Keep one process warm so a call never waits on a cold start, and allow 60 s if it does.
+  numIdleProcesses: 1,
+  initializeProcessTimeout: 60_000,
 }));

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 delete process.env.NVIDIA_API_KEY; // force the no-model path: cases must work with Nemotron down
 import { classify } from "../src/voice/cases.js";
 import { CallBrain, type CallSession, type Turn } from "../src/voice/brain.js";
-import { CORE_QUESTIONS, EMERGENCY_LINE } from "../src/agents/safety.js";
+import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger } from "../src/agents/safety.js";
 import { welfareUrgency } from "../src/agents/escalation.js";
 
 const eq = (text: string, want: string | null) => assert.equal(classify(text), want, `classify("${text}")`);
@@ -22,6 +22,16 @@ eq("is this a scam", "ai_question");
 eq("when is help coming?", "help_question");
 eq("Yes we're all fine", null);
 eq("No one is hurt", null);
+
+// Negation: safe answers must NOT trigger danger; real danger (even right next to a negation) must.
+for (const s of ["nobody is trapped", "no one is bleeding", "we are not stuck", "No, nobody is hurt or injured", "there's no gas smell",
+  "it's not an emergency", "Yes we're safe, nobody is trapped.\nNo, nobody is bleeding or hurt."]) {
+  assert.equal(detectDanger(s).danger, false, `should NOT be danger: "${s}"`);
+}
+for (const s of ["No! The water is rising in the living room", "no one is hurt but we're trapped", "he is not breathing", "I can't breathe",
+  "nobody can get to us, we're trapped", "we're not okay, we're trapped upstairs", "Nobody is hurt and my husband is bleeding badly"]) {
+  assert.equal(detectDanger(s).danger, true, `SHOULD be danger: "${s}"`);
+}
 
 const session: CallSession = {
   alertId: null, personId: null, attemptId: null, ctx: {},

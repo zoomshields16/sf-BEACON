@@ -66,8 +66,22 @@ const DANGER_PATTERNS: [string, RegExp][] = [
   ["explicit", /\b(help me|send help|emergency|we'?re dying|someone is dying)\b/i],
 ];
 
+// "Nobody is trapped" / "no one is bleeding" must not count as danger. A match is negated when a negation word sits in the
+// same clause, within 4 words before it. Clauses break at punctuation, newlines and but/and/however, so
+// "no one is hurt but we're trapped" and "No! The water is rising" still trigger. "can't" is deliberately NOT a negation
+// ("can't breathe" is itself a danger phrase).
+const NEGATION = /\b(no|not|nobody|none|never|nothing|without|neither|nor|isn'?t|aren'?t|wasn'?t|weren'?t|don'?t|doesn'?t|didn'?t|haven'?t|hasn'?t|ain'?t)\b/i;
+const CLAUSE_BREAK = /[.!?,;\n]|\b(?:but|and|however|though|although|except)\b/i;
+
+function negated(text: string, index: number): boolean {
+  const clause = text.slice(0, index).split(new RegExp(CLAUSE_BREAK.source, "gi")).pop() ?? "";
+  return NEGATION.test(clause.trim().split(/\s+/).slice(-4).join(" "));
+}
+
 export function detectDanger(userText: string): { danger: boolean; matched: string[] } {
-  const matched = DANGER_PATTERNS.filter(([, re]) => re.test(userText)).map(([k]) => k);
+  const matched = DANGER_PATTERNS
+    .filter(([, re]) => [...userText.matchAll(new RegExp(re.source, re.flags.replace("g", "") + "g"))].some((m) => !negated(userText, m.index ?? 0)))
+    .map(([k]) => k);
   return { danger: matched.length > 0, matched };
 }
 
