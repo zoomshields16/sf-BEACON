@@ -95,12 +95,18 @@ function step() {
           { channel, role: "user", content: s.answers[s.answers.length - 1], created_at: now() });
       }
       Object.assign(p, { status: kind, urgency: s.urgency, needs: s.needs, notes: s.notes });
+      if (kind === "needs_help" && p.medical) {
+        escalations.unshift({ id: escalations.length + 1, kind: "urgent_assist", person_id: p.id, status: "pending_review", created_at: now(),
+          reason: `${p.medical} at risk without power; needs responder follow-up today.`,
+          payload: { caller: { name: p.name, phone: p.phone }, location: { address: p.address }, emergency: { type: "medical need", urgency_score: s.urgency } } });
+        addLog("escalation", `Queued urgent assistance for ${p.name} (not 911)`, "request_assistance", p.id);
+      }
       addLog("triage", `Extracted triage → ${kind} (${s.urgency})${kind === "critical" ? " — SAFETY OVERRIDE: danger keywords [water, trapped]" : ""}`, "update_triage", p.id,
         { status: kind, urgency_score: s.urgency, needs: s.needs, notes: s.notes });
       if (kind === "critical") {
         const payload = { provider: "RapidSOS (simulated)", caller: { name: p.name, phone: p.phone }, location: { address: p.address, lat: p.lat, lon: p.lon },
           emergency: { type: "flood — trapped", urgency_score: s.urgency, location_in_home: "second floor", needs: s.needs, notes: s.notes } };
-        escalations.unshift({ id: escalations.length + 1, person_id: p.id, reason: "Water rising inside home; residents trapped.", status: "pending_review", payload, created_at: now() });
+        escalations.unshift({ id: escalations.length + 1, kind: "911", person_id: p.id, reason: "Water rising inside home; residents trapped.", status: "pending_review", payload, created_at: now() });
         addLog("escalation", `Created 911 escalation #${escalations.length} (pending human review)`, "escalate_to_911", p.id, payload);
         const h = hexes.reduce((b, x) => (Math.hypot(x.lat - p.lat, x.lon - p.lon) < Math.hypot(b.lat - p.lat, b.lon - p.lon) ? x : b));
         h.risk = Math.min(1, h.risk + 0.35);
@@ -118,6 +124,13 @@ function stats() {
 export function mockRequest(method: string, path: string, _body?: unknown): any {
   const m = (re: RegExp) => path.match(re);
   if (path === "/health") return { ok: true, db: true, mock: true, nemotron: true };
+  if (path === "/api/alerts") return [
+    { id: 1, nws_id: "demo-ffw-houston-1", event_type: "Flash Flood Warning", headline: null, severity: "Severe", area_desc: "Harris, TX",
+      status: active ? "active" : "pending", expires: null, source: "demo", people_inside: people.length },
+    { id: 2, nws_id: "urn:oid:demo", event_type: "Flood Watch", headline: null, severity: "Severe", area_desc: "La Salle; McMullen; Live Oak",
+      status: "pending", expires: null, source: "nws", people_inside: 0 },
+  ];
+  if (path === "/api/alerts/nws/sync") return { fetched: 3, stored: [], alerts: mockRequest("GET", "/api/alerts") };
   if (m(/\/stats$/)) return stats();
   if (m(/\/map\/people$/)) return { type: "FeatureCollection", features: people.map((p) => ({ type: "Feature",
     geometry: { type: "Point", coordinates: [p.lon, p.lat] },
@@ -141,6 +154,9 @@ export function mockRequest(method: string, path: string, _body?: unknown): any 
     active = true; clearInterval(timer); step(); timer = window.setInterval(step, 4000);
     return { ok: true };
   }
+  if (m(/\/reset$/)) { active = false; clearInterval(timer); log.length = 0; escalations.length = 0;
+    people.forEach((p) => Object.assign(p, { status: "unreached", urgency: 0, attempts: 0, needs: [], notes: "", history: [] }));
+    hexes.forEach((h) => (h.risk = rnd() * 0.3)); return { reset: true }; }
   if (m(/\/autopilot\/stop$/)) { active = false; clearInterval(timer); return { stopped: true }; }
   if (m(/\/round$/)) { step(); return { ok: true }; }
   const contact = m(/\/people\/(\d+)\/contact$/);

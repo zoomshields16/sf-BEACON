@@ -53,20 +53,113 @@ export function disasterKey(eventType: string): keyof typeof FALLBACK_FOLLOWUPS 
 
 export const fallbackFollowups = (eventType: string) => FALLBACK_FOLLOWUPS[disasterKey(eventType)];
 
+// Standard, vetted storm-safety tips (FEMA / National Weather Service guidance) read at the end of a NON-emergency call.
+// Fixed text on purpose — the model never improvises safety advice.
+const SAFETY_TIPS: Record<string, string[]> = {
+  flood: ["Never walk or drive through floodwater — turn around, don't drown.",
+          "If water starts coming in, move to a higher floor, and stay away from downed power lines."],
+  hurricane: ["Stay indoors and away from windows until the storm has fully passed.",
+              "If you run a generator, keep it outside and far from doors and windows."],
+  tornado: ["If a tornado warning sounds, go to an interior room on the lowest floor, away from windows.",
+            "Protect your head and neck."],
+  wildfire: ["Keep a go-bag ready and leave right away if you're told to evacuate.",
+             "Keep windows and doors closed to keep smoke out."],
+  winter: ["Never heat your home with a generator, grill or gas oven — carbon monoxide can kill.",
+           "Stay together in one warm room and dress in layers."],
+  default: ["Follow evacuation orders from local officials right away.",
+            "Keep your phone charged and stay tuned to local alerts."],
+};
+
+/** 2 standard tips for the disaster, plus one personal tip when the profile calls for it. */
+export function safetyTips(eventType: string, profile: { medical_needs?: string | null; mobility_limited?: boolean } = {}): string {
+  const tips = [...SAFETY_TIPS[disasterKey(eventType)]];
+  if (/oxygen|cpap|ventilator|dialysis|powered/i.test(profile.medical_needs ?? "")) {
+    tips.push("Keep backup batteries for your medical equipment charged, and plug in while you still have power.");
+  } else if (profile.mobility_limited) {
+    tips.push("Keep your phone charged and within reach in case you need help leaving.");
+  }
+  return tips.join(" ");
+}
+
 // Scan ONLY what the policyholder said (never the agent's questions).
 // We accept false positives on purpose; every escalation goes to human review first.
 const DANGER_PATTERNS: [string, RegExp][] = [
   ["trapped", /\b(trapped|stuck|can'?t get out|pinned)\b/i],
-  ["breathing", /can'?t breathe|not breathing|trouble breathing|unconscious|unresponsive|passed out/i],
-  ["injury", /bleeding|badly hurt|seriously (hurt|injured)|broken (bone|leg|arm|hip)|chest pain|heart attack|stroke/i],
-  ["water", /water('s| is)? (rising|coming in|up to)|flooding (in|inside)|swept/i],
+  ["breathing", /can'?t breathe|not breathing|trouble breathing|unconscious|unresponsive|passed out|can'?t (wake|rouse) (him|her|them|my \w+)( up)?|won'?t wake up|not waking up|(turning|turned|lips are|lips) blue|limp and|seizure|convuls\w*|stopped breathing/i],
+  ["injury", /bleeding|badly hurt|seriously (hurt|injured)|broken (bone|leg|arm|hip)|chest pain|heart attack|stroke|(fell|fallen|fall) (down|off|through|from)[^.!?]{0,50}(not (getting|get) up|can'?t (get up|move)|isn'?t moving|won'?t (move|respond|wake))|(he|she|they)('s| is| are) not getting up|can'?t get (him|her|them) up/i],
+  // Water INSIDE or at a dangerous depth — not "water is up to the second step outside".
+  ["water", /water('s| is)? (rising|coming in|coming into|pouring in)|water('s| is)? (up to|at|over) (my|our|his|her|their|the) (knees?|waist|chest|neck|shoulders|windows?|ceiling|first floor|second floor|door ?knob)|water (in|inside) the (house|home|living room|kitchen|bedroom)|flooding (in|inside)|swept/i],
   ["structure", /roof (collapsed|caved|caving)|house (collapsed|is collapsing)|ceiling fell/i],
   ["fire", /(house|home|kitchen|room) (is )?on fire|fire (inside|in the house)|flames (inside|in the house)/i],
   ["gas", /smell(s)? gas|gas leak/i],
-  ["explicit", /\b(help me|send help|emergency|we'?re dying|someone is dying)\b/i],
+  // DIRECT asks only. A bare "emergency" or "help me" is NOT here: callers say "what emergency?" after our own opening line
+  // ("…the emergency in your area") and used to get hung up on. Those go to the clarifying-question path in CallBrain.
+  ["direct_ask", /\b(send (help|someone|an ambulance|paramedics|the police)|call (911|nine[- ]?one[- ]?one|an ambulance|the police|the fire department)|(i|we) need (an |the )?(ambulance|paramedics?|police|fire department|911)|we'?re dying|someone is dying)\b/i],
 ];
 
+/** Vague distress: the caller says there is an emergency / asks for help, without a direct ask or a specific life threat. */
+export const VAGUE_DISTRESS = /\b(emergenc(y|ies)|help me|i need help|we need help)\b/i;
+
+// "Nobody is trapped" / "no one is bleeding" must not count as danger. A match is negated when a negation word sits in the
+// same clause, within 4 words before it. Clauses break at punctuation, newlines and but/and/however, so
+// "no one is hurt but we're trapped" and "No! The water is rising" still trigger. "can't" is deliberately NOT a negation
+// ("can't breathe" is itself a danger phrase).
+// Bare "no" is usually an answer ("No — the water is rising"), so it only negates when it's the word right before the
+// danger phrase ("no water coming in"). Other negations count within 2 words ("nobody is trapped", "we're not trapped").
+// When in doubt we keep the danger — every escalation is reviewed by a human, a missed emergency is not.
+const NEGATION = /\b(not|nobody|none|never|nothing|without|neither|nor|isn'?t|aren'?t|wasn'?t|weren'?t|don'?t|doesn'?t|didn'?t|haven'?t|hasn'?t|ain'?t|no one)\b/i;
+const CLAUSE_BREAK = /[.!?,;\n]|\b(?:but|and|however|though|although|except)\b/i;
+
+function negated(text: string, index: number): boolean {
+  const clause = text.slice(0, index).split(new RegExp(CLAUSE_BREAK.source, "gi")).pop() ?? "";
+  const words = clause.trim().split(/\s+/).filter(Boolean);
+  if (words.length && /^no$/i.test(words[words.length - 1])) return true;          // "no water coming in"
+  // "no one is bleeding": "no one" sits 3 words back, so it gets a slightly wider window than the other negations.
+  return NEGATION.test(words.slice(-2).join(" ")) || /\bno one\b/i.test(words.slice(-3).join(" "));
+}
+
+/** True if `re` matches somewhere in `text` that isn't negated ("it's not an emergency" → false). */
+// A danger that the same sentence says is already OVER ("was trapped earlier but they got her out", "rescued",
+// "everyone's safe now") is not a current emergency. Kept narrow on purpose: "my son was swept away" still triggers.
+const RESOLVED = /\b(got (her|him|them|us|me) out|pulled (her|him|them|us|me) out|(was|were|got) rescued|rescued (her|him|them|us|me)|(is|are|'s|'re) (safe|fine|okay|out) now|no longer (trapped|stuck|in danger))\b/i;
+function sentenceAt(text: string, index: number): string {
+  const start = Math.max(text.lastIndexOf(".", index), text.lastIndexOf("!", index), text.lastIndexOf("?", index)) + 1;
+  const rest = text.slice(index).search(/[.!?]/);
+  return text.slice(start, rest < 0 ? undefined : index + rest);
+}
+
+export const matchUnnegated = (re: RegExp, text: string) =>
+  [...text.matchAll(new RegExp(re.source, re.flags.replace("g", "") + "g"))]
+    .some((m) => !negated(text, m.index ?? 0) && !RESOLVED.test(sentenceAt(text, m.index ?? 0)));
+
 export function detectDanger(userText: string): { danger: boolean; matched: string[] } {
-  const matched = DANGER_PATTERNS.filter(([, re]) => re.test(userText)).map(([k]) => k);
+  const matched = DANGER_PATTERNS.filter(([, re]) => matchUnnegated(re, userText)).map(([k]) => k);
   return { danger: matched.length > 0, matched };
+}
+
+// Nemotron's danger flag only counts if the caller's words (or the model's stated reason) name a CONCRETE life threat.
+// "Lots of water around and thunder" is weather, not an emergency — the model alone must not trigger the 911 line.
+const LIFE_THREAT = /\b(trapped|stuck (inside|upstairs|in the)|can'?t get out|pinned|seriously (hurt|injured)|badly (hurt|injured)|injured badly|bleed\w*|unconscious|unresponsive|not respond\w*|isn'?t (answering|responding|moving|breathing)|collaps\w*|passed out|chest pain|heart attack|stroke|seizure|drown\w*|swept|fell (down|off|through)|has fallen|can'?t (move|get up|breathe|wake)|(trouble|hard|difficulty) breathing|not breathing|stopped breathing|on fire|flames|smoke (is )?(inside|in the|coming in)|smell gas|gas leak|roof (collapsed|caved|fell)|ceiling (collapsed|fell|caved)|(oxygen|concentrator|ventilator|cpap|dialysis|life.?support)[^.!?]{0,40}(stopped|died|is dead|ran out|failed|not working|won'?t (work|turn on)|shut off|battery (is |just )?(dead|died|almost dead|about to die)|only (a few )?minutes left)|electrocut\w*|downed? power line|send help|help me|we'?re dying|is dying|water (is )?(inside|in the (house|home|room|living room|kitchen|bedroom)|coming in|rising|pouring)|flood\w* (inside|in the house))\b/i;
+
+export function isConcreteThreat(...texts: (string | undefined)[]): boolean {
+  return texts.some((t) => Boolean(t) && LIFE_THREAT.test(t!));
+}
+
+// The agent must never imply rescue is coming — only a human responder can promise that.
+const FALSE_PROMISES = /\s*[^.!?]*\b(help is (on (the|its) way|coming)|until help arrives|(responders|rescuers|someone|help|they)('s| is| are| will be)? (on (the|their|its) way|coming to you|being sent|be there soon)|we('re| are| will be)? (sending|dispatching) (help|someone|responders)|help will (arrive|be there))\b[^.!?]*[.!?]?/gi;
+
+// Never promise insurance coverage on a safety call — that's for a licensed agent.
+const COVERAGE_PROMISE = /[^.!?]*\b((is|are|will be|should be|would be) covered|we('ll| will) (cover|pay)|state farm (can|will) (cover|pay|help with (that|this|your) claim|take care of (that|it))|(your|the) (policy|insurance) (covers|will cover))\b[^.!?]*[.!?]?/gi;
+
+/** Replaces any coverage promise with the standard follow-up line. */
+export function stripCoveragePromises(text: string): string {
+  return COVERAGE_PROMISE.test(text)
+    ? text.replace(COVERAGE_PROMISE, " A State Farm agent will follow up about your claim.").replace(/\s{2,}/g, " ").trim()
+    : text;
+}
+
+/** Removes any sentence that promises help is coming. Falls back to a neutral line if nothing is left. */
+export function stripFalsePromises(text: string): string {
+  const cleaned = text.replace(FALSE_PROMISES, "").replace(/\s{2,}/g, " ").trim();
+  return cleaned || "Thank you.";
 }

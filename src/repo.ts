@@ -7,7 +7,7 @@
 //   contact_attempts(id, alert_id, person_id, channel, status, external_id, started_at, ended_at)
 //   conversation_history(id, alert_id, person_id, attempt_id, channel, role, content, created_at)
 //   triage(alert_id, person_id, status, urgency_score, emergency_type, needs text[], location_in_home, notes, updated_at)
-//   escalations(id, alert_id, person_id, reason, payload jsonb, status, created_at, reviewed_at)
+//   escalations(id, alert_id, person_id, kind, reason, payload jsonb, status, created_at, reviewed_at)
 import { query } from "./db.js";
 
 export type Id = string | number;
@@ -24,6 +24,9 @@ const DB_FUNCTIONS = new Set([
   "map_people_geojson",
   "map_hex_geojson",
   "simulate_reports",
+  "reset_demo",
+  "upsert_nws_alert",
+  "alerts_overview",
 ]);
 
 /** Calls a whitelisted SQL function with parameterized args. Unwraps single scalar/json results. */
@@ -39,6 +42,20 @@ async function fn(name: string, args: unknown[]): Promise<any> {
 }
 
 export const activateAlert = (alertId: Id) => fn("activate_alert", [alertId]);
+export const resetDemo = (alertId: Id) => fn("reset_demo", [alertId]);
+/** All non-ended alerts (demo + NWS) with how many policyholders live inside each. */
+export const alertsOverview = async (): Promise<Row[]> => {
+  const r = await fn("alerts_overview", []);
+  return Array.isArray(r) ? r : [r];
+};
+
+export interface NwsAlertInput {
+  nwsId: string; eventType: string; headline?: string; description?: string; severity?: string;
+  urgency?: string; areaDesc?: string; geometry: unknown; onset?: string | null; expires?: string | null;
+}
+export const upsertNwsAlert = async (a: NwsAlertInput): Promise<number> =>
+  Number(await fn("upsert_nws_alert", [a.nwsId, a.eventType, a.headline ?? null, a.description ?? null, a.severity ?? null,
+    a.urgency ?? null, a.areaDesc ?? null, JSON.stringify(a.geometry), a.onset ?? null, a.expires ?? null]));
 export const callQueue = (alertId: Id, limit: number): Promise<Row[]> => fn("call_queue", [alertId, limit]);
 export const personContext = (personId: Id, alertId: Id): Promise<Row> => fn("person_context", [personId, alertId]);
 export const alertStats = async (alertId: Id) => {
@@ -118,6 +135,10 @@ export async function insertAttempt(alertId: Id, personId: Id, channel: Channel)
 export const setAttemptExternalId = (attemptId: Id, externalId: string) =>
   query(`update contact_attempts set external_id = $2 where id = $1`, [attemptId, externalId]);
 
+/** On API start: attempts left 'in_progress' by a crash/restart would block those people forever — close them. */
+export const closeOrphanedAttempts = async (): Promise<number> =>
+  (await query(`update contact_attempts set status = 'timeout', ended_at = now() where status = 'in_progress' returning id`)).length;
+
 export const finishAttempt = (attemptId: Id, status: string) =>
   query(`update contact_attempts set status = $2, ended_at = now() where id = $1`, [attemptId, status]);
 
@@ -134,6 +155,15 @@ export const latestAttempt = async (alertId: Id, personId: Id) =>
     [alertId, personId],
   ))[0] ?? null;
 
+/** How many of this person's attempts ended without reaching them (no_answer / failed / timeout / unanswered text).
+ *  Same definition the DB uses for call_queue and the exhausted trigger. */
+export const countUnreached = async (alertId: Id, personId: Id): Promise<number> =>
+  Number((await query(`select failed_attempts($1, $2) as n`, [alertId, personId]))[0]?.n ?? 0);
+
+/** Caller asked us to stop calling — persisted, so call_queue never re-queues them (survives restarts). */
+export const setDoNotContact = (alertId: Id, personId: Id) =>
+  query(`update triage set do_not_contact = true, updated_at = now() where alert_id = $1 and person_id = $2`, [alertId, personId]);
+
 // ---------- conversation_history ----------
 export const addMessage = (
   alertId: Id, personId: Id, attemptId: Id | null, channel: Channel, role: "agent" | "user", content: string,
@@ -146,7 +176,7 @@ export const addMessage = (
 
 // ---------- triage ----------
 export interface TriageFields {
-  status: "unreached" | "safe" | "needs_help" | "critical";
+  status: "unreached" | "safe" | "needs_help" | "critical" | "exhausted";
   urgency_score: number;
   emergency_type: string | null;
   needs: string[];
@@ -166,19 +196,24 @@ export const updateTriage = (alertId: Id, personId: Id, t: TriageFields) =>
   );
 
 // ---------- escalations ----------
-export async function createEscalation(alertId: Id, personId: Id, reason: string, payload: unknown): Promise<Id> {
+/** '911' = life-or-death only (triage critical). Others go to the State Farm responder queue, never 911. */
+export type EscalationKind = "911" | "urgent_assist" | "welfare";
+
+export async function createEscalation(
+  alertId: Id, personId: Id, reason: string, payload: unknown, kind: EscalationKind = "911",
+): Promise<Id> {
   const rows = await query(
-    `insert into escalations (alert_id, person_id, reason, payload, status)
-     values ($1, $2, $3, $4, 'pending_review') returning id`,
-    [alertId, personId, reason, JSON.stringify(payload)],
+    `insert into escalations (alert_id, person_id, kind, reason, payload, status)
+     values ($1, $2, $3, $4, $5, 'pending_review') returning id`,
+    [alertId, personId, kind, reason, JSON.stringify(payload)],
   );
   return rows[0].id;
 }
 
-export const openEscalationFor = async (alertId: Id, personId: Id) =>
+export const openEscalationFor = async (alertId: Id, personId: Id, kind: EscalationKind = "911") =>
   (await query(
-    `select * from escalations where alert_id = $1 and person_id = $2 and status = 'pending_review' limit 1`,
-    [alertId, personId],
+    `select * from escalations where alert_id = $1 and person_id = $2 and kind = $3 and status = 'pending_review' limit 1`,
+    [alertId, personId, kind],
   ))[0] ?? null;
 
 export const listEscalations = (alertId: Id) =>

@@ -41,6 +41,7 @@ export function MapView({ people, hex, selected, onSelect, simulateMode, onSimul
         name: pick(p, ["name", "full_name"]) ?? "Policyholder",
         status: pick(p, ["status", "triage_status"]) ?? "unreached",
         urgency: Number(pick(p, ["urgency_score", "urgency"]) ?? 0),
+        onCall: Boolean(p.on_call),
         latlng: [f.geometry.coordinates[1], f.geometry.coordinates[0]] as [number, number],
       };
     })
@@ -69,18 +70,18 @@ export function MapView({ people, hex, selected, onSelect, simulateMode, onSimul
         <CircleMarker
           key={p.id}
           center={p.latlng}
-          radius={p.status === "critical" ? 9 : p.id === selected ? 8 : 5}
+          radius={p.status === "critical" ? 9 : p.id === selected || p.onCall ? 8 : 5}
           pathOptions={{
-            color: p.id === selected ? "#fff" : STATUS_COLORS[p.status] ?? "#64748b",
-            weight: p.id === selected ? 2.5 : 1,
+            color: p.id === selected ? "#fff" : p.onCall ? "#38bdf8" : STATUS_COLORS[p.status] ?? "#64748b",
+            weight: p.id === selected ? 2.5 : p.onCall ? 3 : 1,
             fillColor: STATUS_COLORS[p.status] ?? "#64748b",
             fillOpacity: p.status === "unreached" ? 0.55 : 0.9,
-            className: p.status === "critical" ? "pulse" : undefined,
+            className: p.status === "critical" || p.onCall ? "pulse" : undefined,
           }}
           eventHandlers={{ click: () => onSelect(p.id) }}
         >
           <Tooltip direction="top" offset={[0, -6]}>
-            <b>{p.name}</b> · {STATUS_LABEL[p.status] ?? p.status}{p.urgency ? ` · ${p.urgency}` : ""}
+            <b>{p.name}</b> · {p.onCall ? "📞 on a call · " : ""}{STATUS_LABEL[p.status] ?? p.status}{p.urgency ? ` · ${p.urgency}` : ""}
           </Tooltip>
         </CircleMarker>
       ))}

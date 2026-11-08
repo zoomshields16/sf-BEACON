@@ -26,7 +26,14 @@ const SCENARIOS: Scenario[] = [
               "My husband slipped and he's bleeding from his head.", "No, it isn't safe."],
     textReply: "Water is still rising, we're on the second floor, please send help",
   },
-  { kind: "no_answer", weight: 20, answers: [], textReply: "Sorry missed your call, we're ok but the roof is leaking." },
+  {
+    kind: "needs_help", weight: 6,   // time-critical: should land in Urgent assistance (not 911)
+    answers: ["We're okay right now.", "No, nobody is hurt.",
+              "Not really. The power is out and my oxygen concentrator battery only has about three hours left.",
+              "I can't drive and my son can't get here until tomorrow.", "No, that's the main thing."],
+    textReply: "Oxygen battery is getting low, still no power.",
+  },
+  { kind: "no_answer", weight: 14, answers: [], textReply: "Sorry missed your call, we're ok but the roof is leaking." },
 ];
 
 function scenarioFor(id: string): Scenario {
@@ -54,7 +61,7 @@ export function simulateCall(i: PlaceCallInput): { externalId: string } {
     if (s.kind === "no_answer") return handleCallEnded({ externalId, answered: false, transcript: [] });
 
     const brain = new CallBrain(
-      { alertId: i.alertId, personId: i.personId, attemptId: i.attemptId, ctx: i.ctx, script: i.script },
+      { alertId: i.alertId, personId: i.personId, attemptId: i.attemptId, ctx: i.ctx, script: i.script, simulated: true },
       (text, matched) => markCriticalNow(i.alertId, i.personId, text, matched),
     );
     const transcript: Turn[] = [];

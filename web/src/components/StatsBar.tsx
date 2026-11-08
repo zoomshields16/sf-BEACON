@@ -7,6 +7,7 @@ const TILES: { key: string; label: string; color?: string }[] = [
   { key: "needs_help", label: "Needs help", color: STATUS_COLORS.needs_help },
   { key: "critical", label: "Critical", color: STATUS_COLORS.critical },
   { key: "exhausted", label: "Couldn't reach", color: STATUS_COLORS.exhausted },
+  { key: "on_call_now", label: "On a call now", color: "#38bdf8" },
   { key: "high_risk_hexes", label: "High-risk zones", color: "#f97316" },
 ];
 

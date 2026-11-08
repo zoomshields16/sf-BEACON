@@ -7,10 +7,14 @@ import { ReadableStream } from "node:stream/web";
 import { cli, defineAgent, ServerOptions, voice, type JobContext, type llm } from "@livekit/agents";
 import * as openai from "@livekit/agents-plugin-openai";
 import { RoomServiceClient } from "livekit-server-sdk";
-import { CallBrain, type BrainReply, type CallSession, type Turn } from "./brain.js";
+import { CallBrain, liveCallStats, type BrainReply, type CallSession, type Turn } from "./brain.js";
 import { CORE_QUESTIONS } from "../agents/safety.js";
+import { SILENCE_REMINDERS, type CallOutcome } from "./cases.js";
 
-const API = process.env.INTERNAL_API_URL ?? `http://localhost:${process.env.PORT ?? 3000}`;
+const SILENCE_AFTER_S = Number(process.env.VOICE_SILENCE_AFTER_S ?? 10); // quiet this long → "are you still there?"
+
+// Trailing slashes stripped so "http://localhost:3000/" doesn't produce "//internal/..." URLs.
+const API = (process.env.INTERNAL_API_URL || `http://localhost:${process.env.PORT ?? 3000}`).replace(/\/+$/, "");
 
 async function api<T = any>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${API}${path}`, {
@@ -41,6 +45,13 @@ function lastUserText(chatCtx: llm.ChatContext): string {
   return "";
 }
 
+/** Text as the TTS should pronounce it ("911" → "nine-one-one", not "nine hundred eleven"). Transcript keeps the original. */
+export const speakable = (text: string) => text.replace(/\b9-?1-?1\b/g, "nine-one-one");
+
+function userTurnCount(chatCtx: llm.ChatContext): number {
+  return chatCtx.items.filter((i: any) => i?.type === "message" && i.role === "user").length;
+}
+
 class SafeNetCaller extends voice.Agent {
   readonly transcript: Turn[] = [];
 
@@ -50,8 +61,9 @@ class SafeNetCaller extends voice.Agent {
 
   /** Speak via session.say (used for the opening and for final lines, so we can hang up after playout). */
   private speak(r: BrainReply) {
-    this.transcript.push({ role: "agent", content: r.say });
-    const handle = this.session.say(r.say, { allowInterruptions: !r.endCall });
+    if (!r.say) { void this.hangup(); return; } // nothing to say (voicemail): just hang up
+    this.transcript.push({ role: "agent", content: r.say }); console.log(`AGENT: ${r.say}`);
+    const handle = this.session.say(speakable(r.say), { allowInterruptions: !r.endCall });
     if (r.endCall) handle.waitForPlayout().then(() => this.hangup()).catch(() => this.hangup());
   }
 
@@ -59,16 +71,47 @@ class SafeNetCaller extends voice.Agent {
     this.speak(this.brain.opening());
   }
 
+  private silenceRunning = false;
+  private userTurns = () => this.transcript.filter((t) => t.role === "user").length;
+
+  /** Caller went quiet: remind up to SILENCE_REMINDERS times, then hang up. (LiveKit fires "away" once per silence, so we loop here.) */
+  async onSilence() {
+    if (this.silenceRunning || this.brain.outcome) return;
+    this.silenceRunning = true;
+    try {
+      const before = this.userTurns();
+      for (let i = 0; i < SILENCE_REMINDERS; i++) {
+        this.speak(this.brain.reminder());
+        await new Promise((r) => setTimeout(r, SILENCE_AFTER_S * 1000));
+        if (this.userTurns() > before || this.brain.outcome) return;
+      }
+      this.speak(this.brain.giveUp());
+    } finally {
+      this.silenceRunning = false;
+    }
+  }
+
+  private lastTurnKey = "";
+  private lastReply: BrainReply | null = null;
+
   async llmNode(chatCtx: llm.ChatContext, ..._rest: unknown[]): ReturnType<voice.Agent["llmNode"]> {
     const said = lastUserText(chatCtx);
-    if (said) this.transcript.push({ role: "user", content: said });
+    // LiveKit can invoke llmNode more than once for the same caller turn — never advance the script twice.
+    const turnKey = `${userTurnCount(chatCtx)}:${said}`;
+    if (turnKey === this.lastTurnKey && this.lastReply && !this.lastReply.endCall) {
+      const again = this.lastReply.say;
+      return new ReadableStream<string>({ start(c) { c.enqueue(speakable(again)); c.close(); } });
+    }
+    this.lastTurnKey = turnKey;
+    if (said) { this.transcript.push({ role: "user", content: said }); console.log(`CALLER: ${said}`); }
     const r = await this.brain.reply(this.transcript);
+    this.lastReply = r;
     if (r.endCall) {
       this.speak(r);
       return null;
     }
-    this.transcript.push({ role: "agent", content: r.say });
-    return new ReadableStream<string>({ start(c) { c.enqueue(r.say); c.close(); } });
+    this.transcript.push({ role: "agent", content: r.say }); console.log(`AGENT: ${r.say}`);
+    return new ReadableStream<string>({ start(c) { c.enqueue(speakable(r.say)); c.close(); } });
   }
 }
 
@@ -77,17 +120,32 @@ export default defineAgent({
     const meta = JSON.parse(ctx.job.metadata || "{}") as { attemptId?: string };
     await ctx.connect();
 
-    const session = meta.attemptId
-      ? await api<CallSession>(`/internal/calls/${meta.attemptId}`).catch((e) => { console.error(e); return testSession(); })
-      : testSession();
-    const attempt = session.attemptId;
+    // Retry the session fetch; if the API is still down, run the safe default script but KEEP the attempt id,
+    // so danger escalations and the call result are still reported once the API answers.
+    let session: CallSession = testSession();
+    if (meta.attemptId) {
+      for (let i = 0; i < 3; i++) {
+        try { session = await api<CallSession>(`/internal/calls/${meta.attemptId}`); break; }
+        catch (e) { console.error(`session fetch ${i + 1}/3 failed:`, (e as Error).message); await new Promise((r) => setTimeout(r, 500 * (i + 1))); }
+      }
+    }
+    const attempt = session.attemptId ?? meta.attemptId ?? null;
 
     let finished = false;
     const finish = async () => {
-      if (finished || attempt == null) return;
+      if (finished) return;
       finished = true;
+      console.log(`\n===== CALL TRANSCRIPT (${ctx.room.name}) =====\n` +
+        agent.transcript.map((t) => `${t.role === "agent" ? "AGENT" : "CALLER"}: ${t.content}`).join("\n") +
+        `\n===== BRAIN: ${liveCallStats.nemotronTurns} turn(s) by Nemotron, ${liveCallStats.fallbackTurns} scripted fallback =====\n`);
+      if (attempt == null) return;
       const answered = agent.transcript.some((t) => t.role === "user");
-      await api(`/internal/calls/${attempt}/ended`, { answered, transcript: agent.transcript }).catch(console.error);
+      // "silent" ONLY when the brain gave up after silence reminders on a live line. Never said a word and hung up
+      // (or STT missed them) → treat as not reached and retry — not an emergency.
+      const outcome: CallOutcome = !answered
+        ? (brain.outcome === "silent" ? "silent" : "no_answer")
+        : brain.outcome ?? (brain.coreDone ? "completed" : "hangup");
+      await api(`/internal/calls/${attempt}/ended`, { answered, outcome, transcript: agent.transcript }).catch(console.error);
     };
     const hangup = async () => {
       await finish();
@@ -99,19 +157,26 @@ export default defineAgent({
 
     const brain = new CallBrain(session, async (text, matched) => {
       if (attempt != null) await api(`/internal/calls/${attempt}/danger`, { text, matched });
+    }, async (text, reason) => {
+      if (attempt != null) await api(`/internal/calls/${attempt}/review`, { text, reason });
     });
     const agent = new SafeNetCaller(brain, hangup);
     ctx.addShutdownCallback(finish);
 
     const vsession = new voice.AgentSession({
+      turnHandling: { preemptiveGeneration: { enabled: false } },
+      userAwayTimeout: SILENCE_AFTER_S,
       stt: (process.env.LIVEKIT_STT ?? "deepgram/nova-3") as any,
       tts: (process.env.LIVEKIT_TTS ?? "cartesia/sonic-3") as any,
       // Nominal: replies come from the llmNode override, but the pipeline expects an LLM to be configured.
       llm: new openai.LLM({
         model: process.env.NEMOTRON_MODEL ?? "nemotron",
         baseURL: process.env.NEMOTRON_BASE_URL ?? "https://integrate.api.nvidia.com/v1",
-        apiKey: process.env.NVIDIA_API_KEY ?? "unused",
+        apiKey: process.env.NEMOTRON_API_KEY || process.env.NVIDIA_API_KEY || "unused",
       }),
+    });
+    vsession.on(voice.AgentSessionEventTypes.UserStateChanged, (ev) => {
+      if (ev.newState === "away") void agent.onSilence();
     });
     await vsession.start({ agent, room: ctx.room });
   },
@@ -120,4 +185,8 @@ export default defineAgent({
 cli.runApp(new ServerOptions({
   agent: fileURLToPath(import.meta.url),
   agentName: process.env.LIVEKIT_AGENT_NAME ?? "safenet-caller",
+  // The job process loads this TypeScript file cold (slow on Windows/OneDrive); the 10 s default timed out and calls got no agent.
+  // Keep one process warm so a call never waits on a cold start, and allow 60 s if it does.
+  numIdleProcesses: 1,
+  initializeProcessTimeout: 60_000,
 }));

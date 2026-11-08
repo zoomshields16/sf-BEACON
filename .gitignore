@@ -8,3 +8,11 @@ dist/
 *.log
 web/node_modules/
 web/dist/
+
+# DB snapshots contain real team phone numbers — share privately like .env
+db/snapshots/
+
+# ML: python env + regenerable embeddings (dataset text + trained weights ARE committed)
+ml/.venv/
+ml/data/X.f32
+ml/data/meta.json

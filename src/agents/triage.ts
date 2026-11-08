@@ -1,5 +1,5 @@
 import { chatJSON, chatText } from "./nemotron.js";
-import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger, fallbackFollowups } from "./safety.js";
+import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger, fallbackFollowups, safetyTips } from "./safety.js";
 import { ctxEventType, ctxHistory, ctxName, logAgent, type Id, type Row, type TriageFields } from "../repo.js";
 
 export interface CallScript {
@@ -19,7 +19,8 @@ export async function generateCallScript(ctx: Row, alertId: Id, personId: Id): P
     `You write follow-up questions for a State Farm disaster check-in phone call.
 The call already asks these fixed questions first: ${CORE_QUESTIONS.join(" | ")}
 Write 2-3 SHORT, plain-language follow-up questions tailored to this person (household, medical needs, pets,
-SafeRoom, location, prior answers). Never repeat the fixed questions. JSON: {"questions": ["..."]}`,
+SafeRoom, location, prior answers). Only ask about things in the profile (no pets unless pets are listed).
+Never repeat the fixed questions. JSON: {"questions": ["..."]}`,
     JSON.stringify(ctx).slice(0, 6000),
     (x: any) => (isStrArray(x?.questions, 3) ? (x.questions as string[]) : null),
   );
@@ -27,9 +28,11 @@ SafeRoom, location, prior answers). Never repeat the fixed questions. JSON: {"qu
   const source = generated ? "nemotron" : "fallback";
 
   const script: CallScript = {
-    opening: `Hi ${ctxName(ctx)}, this is the State Farm SafeNet assistant calling about the ${event} in your area. I have a few quick safety questions.`,
+    // First thing the caller hears: there is a <storm> in your area right now.
+    opening: `Hi ${ctxName(ctx)}, this is the State Farm SafeNet assistant. There's a ${event} in your area right now, and I'm calling to make sure you and everyone in your home are safe. I have a few quick questions.`,
     questions: [...CORE_QUESTIONS, ...followups],
-    closing: `Thank you. If anything changes or you are in danger, call 911. We'll follow up by text.`,
+    // Non-emergency calls end with standard storm-safety tips (emergencies end on the 911 line instead).
+    closing: `Thank you. Before you go — try to stay calm and take slow, deep breaths; you're doing the right things. A few safety tips: ${safetyTips(event, ctx.profile ?? {})} If anything changes or you are in danger, call 911. A State Farm responder will follow up.`,
     source,
   };
   await logAgent({
@@ -57,15 +60,26 @@ function validateTriage(x: any): TriageFields | null {
   };
 }
 
+// A need only counts when the caller says they LACK it ("out of ice", "power's out", "need a ride"),
+// not when they mention it ("we have plenty of water").
+const LACK = String.raw`(?:need|needs|out of|no|without|don'?t have|low on|running out of|ran out of|lost)\s+(?:\w+\s+){0,3}`;
+const NEED_PATTERNS: [RegExp, string][] = [
+  [new RegExp(`${LACK}(?:power|electricity)|power(?:'s| is| has been)? (?:out|off|gone)`, "i"), "power"],
+  [new RegExp(`${LACK}(?:water|drinking water)`, "i"), "water"],
+  [new RegExp(`${LACK}food`, "i"), "food"],
+  [new RegExp(`${LACK}(?:medic\\w*|insulin|oxygen|prescriptions?|ice)|(?:insulin|medication|oxygen)[^.]{0,40}(?:cold|ice|power)`, "i"), "medication"],
+  [new RegExp(`${LACK}(?:shelter|place to (?:stay|go))|somewhere to (?:go|stay)|(?:need|want) to evacuate`, "i"), "shelter"],
+  [new RegExp(`${LACK}(?:ride|transport\\w*|car)|(?:could use|need) a ride`, "i"), "transportation"],
+];
+// Problems stated by the caller. A bare "no" is NOT a problem ("No, nobody is hurt").
+const PROBLEM = /\b(not (?:really|safe|okay|ok|good)|isn'?t safe|unsafe|damage[ds]?|leak\w*|flood\w* (?:in|inside)|hurt|injur\w*|scared|getting cold|no heat|can'?t (?:leave|get out|reach))\b/i;
+const NEGATED_PROBLEM = /\b(no(?:body| one)?|not|nothing)\b[^.?!]{0,20}\b(hurt|injur\w*|damage\w*)/gi;
+
 function heuristicTriage(userText: string): TriageFields {
   const t = userText.toLowerCase();
-  const needs = [
-    [/power|electric/, "power"], [/water|thirst/, "water"], [/food/, "food"],
-    [/medic|insulin|oxygen|prescription/, "medication"], [/shelter|place to stay|evacuat/, "shelter"],
-    [/ride|transport|car/, "transportation"],
-  ].filter(([re]) => (re as RegExp).test(t)).map(([, n]) => n as string);
-  const negative = /\b(no|not|isn'?t|aren'?t|can'?t|unsafe|damage|leak|hurt|injur)\b/.test(t);
-  const status: TriageFields["status"] = needs.length || negative ? "needs_help" : "safe";
+  const needs = NEED_PATTERNS.filter(([re]) => re.test(t)).map(([, n]) => n);
+  const problem = PROBLEM.test(t.replace(NEGATED_PROBLEM, ""));
+  const status: TriageFields["status"] = needs.length || problem ? "needs_help" : "safe";
   return {
     status,
     urgency_score: status === "safe" ? 10 : 50,
@@ -88,8 +102,18 @@ export async function extractTriage(
     `You are a disaster triage analyst. From the conversation, extract:
 {"status": "safe"|"needs_help"|"critical", "urgency_score": 0-100, "emergency_type": string|null,
  "needs": string[], "location_in_home": string|null, "notes": "one or two sentences"}
-critical = immediate danger to life (trapped, injured, rising water inside, fire, gas, can't breathe).
-needs_help = not in immediate danger but needs supplies, shelter, power, medication, or transport.`,
+critical = immediate danger to life RIGHT NOW (trapped, seriously injured, rising water inside, fire, gas, can't breathe,
+  unresponsive person, life-support equipment about to fail).
+needs_help = not in immediate danger but needs something (supplies, shelter, power, medication, transport, repairs).
+safe = everyone okay and no unmet needs. Be skeptical: don't invent needs the caller didn't state.
+urgency_score — use this scale strictly; most callers in a disaster are 10-50:
+  0-15  safe, no needs
+  20-40 minor or non-urgent needs (power out but okay, a few days of supplies, minor damage, anxious)
+  45-65 needs help within a day or two (low on medication, can't stay long-term, needs transport soon)
+  70-85 time-critical within ~12 hours for a vulnerable person (oxygen/dialysis/medical power running out,
+        can't evacuate and home unsafe tonight, no safe place to sleep tonight with elderly/children)
+  90-100 immediate danger to life (critical)
+Insulin at room temperature lasts weeks — "no ice" alone is not time-critical.`,
     `Person context: ${JSON.stringify(ctx).slice(0, 3000)}\n\nConversation:\n${transcript.slice(0, 6000)}`,
     validateTriage,
   );

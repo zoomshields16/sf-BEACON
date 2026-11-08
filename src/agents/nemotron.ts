@@ -2,24 +2,105 @@ import OpenAI from "openai";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
 import { logAgent, type AgentLogEntry, type Id } from "../repo.js";
 
-export const nemotronEnabled = () => Boolean(process.env.NVIDIA_API_KEY && process.env.NEMOTRON_MODEL);
+// Two endpoints:
+//   primary  = NEMOTRON_BASE_URL (our own Nemotron NIM on Brev) if set, else NVIDIA's hosted API
+//   fallback = NVIDIA's hosted API (build.nvidia.com) — used automatically while the primary is down
+// If the Brev GPU is stopped/unreachable mid-demo, calls keep working on the hosted API.
+const HOSTED_URL = "https://integrate.api.nvidia.com/v1";
+const HOSTED_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b";
+const selfHosted = () => Boolean(process.env.NEMOTRON_BASE_URL);
+export const nemotronEnabled = () =>
+  Boolean(process.env.NEMOTRON_MODEL && (selfHosted() || process.env.NVIDIA_API_KEY));
 
-let client: OpenAI | null = null;
-function getClient() {
-  client ??= new OpenAI({
-    apiKey: process.env.NVIDIA_API_KEY,
-    // Hosted API by default; point at a Nemotron NIM on Brev with NEMOTRON_BASE_URL.
-    baseURL: process.env.NEMOTRON_BASE_URL || "https://integrate.api.nvidia.com/v1",
-    timeout: 30_000,
-    maxRetries: 1,
-  });
-  return client;
+interface Endpoint { name: "brev" | "hosted"; client: OpenAI; model: string }
+let primary: Endpoint | null = null;
+let fallback: Endpoint | null | undefined;
+function endpoints(): { primary: Endpoint; fallback: Endpoint | null } {
+  if (!primary) {
+    primary = selfHosted()
+      ? { name: "brev", model: process.env.NEMOTRON_MODEL!,
+          client: new OpenAI({ apiKey: process.env.NEMOTRON_API_KEY || "none", baseURL: process.env.NEMOTRON_BASE_URL, timeout: 10_000, maxRetries: 0 }) }
+      : { name: "hosted", model: process.env.NEMOTRON_MODEL!,
+          client: new OpenAI({ apiKey: process.env.NVIDIA_API_KEY, baseURL: HOSTED_URL, timeout: 30_000, maxRetries: 1 }) };
+    fallback = selfHosted() && process.env.NVIDIA_API_KEY
+      ? { name: "hosted", model: process.env.NEMOTRON_FALLBACK_MODEL || HOSTED_MODEL,
+          client: new OpenAI({ apiKey: process.env.NVIDIA_API_KEY, baseURL: HOSTED_URL, timeout: 30_000, maxRetries: 1 }) }
+      : null;
+  }
+  return { primary, fallback: fallback ?? null };
 }
+
+// Circuit breaker: after the primary fails (network / timeout / 5xx), use the fallback for 30 s, then try again.
+let primaryDownUntil = 0;
+export const endpointStats = { brev: 0, hosted: 0, failovers: 0, lastFailover: null as string | null };
+const isOutage = (err: any) => !err?.status || err.status >= 500 || err.name === "APIConnectionError" || err.name === "APIConnectionTimeoutError";
 
 // Some Nemotron models toggle reasoning via the system prompt (e.g. "/no_think" or
 // "detailed thinking off"). Set NEMOTRON_SYSTEM_PREFIX if tool calls are flaky.
 const withPrefix = (system: string) =>
   process.env.NEMOTRON_SYSTEM_PREFIX ? `${process.env.NEMOTRON_SYSTEM_PREFIX}\n${system}` : system;
+
+// Nemotron 3.5 reasons by default (seconds per reply). Off everywhere for latency; the coordinator can opt in
+// with NEMOTRON_COORDINATOR_THINKING=true (its reasoning then shows up in the agent log).
+const thinking = (on: boolean) => ({ chat_template_kwargs: { enable_thinking: on } }) as Record<string, unknown>;
+
+// ---------- request queue: bounded concurrency, priority lanes, retry on 429 ----------
+// "high" = a real phone call (someone is waiting on the line), "normal" = coordinator/triage, "low" = simulated calls.
+export type Priority = "high" | "normal" | "low";
+const RANK: Record<Priority, number> = { high: 0, normal: 1, low: 2 };
+// Our own H100 batches requests well; the shared hosted API rate-limits, so stay gentle there.
+const MAX_CONCURRENCY = Number(process.env.NEMOTRON_MAX_CONCURRENCY ?? (process.env.NEMOTRON_BASE_URL ? 8 : 3));
+let active = 0;
+const waiting: { rank: number; go: () => void }[] = [];
+
+async function acquire(priority: Priority) {
+  if (active < MAX_CONCURRENCY && waiting.length === 0) { active++; return; }
+  await new Promise<void>((go) => {
+    waiting.push({ rank: RANK[priority], go });
+    waiting.sort((a, b) => a.rank - b.rank);
+  });
+  active++;
+}
+function release() {
+  active--;
+  waiting.shift()?.go();
+}
+
+type CreateParams = Parameters<OpenAI["chat"]["completions"]["create"]>[0];
+async function create(params: CreateParams, priority: Priority = "normal"): Promise<OpenAI.Chat.Completions.ChatCompletion> {
+  await acquire(priority);
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const { primary, fallback } = endpoints();
+        const usePrimary = !fallback || Date.now() >= primaryDownUntil;
+        const ep = usePrimary ? primary : fallback!;
+        try {
+          const res = (await ep.client.chat.completions.create({ ...params, model: ep.model, stream: false } as any)) as OpenAI.Chat.Completions.ChatCompletion;
+          endpointStats[ep.name]++;
+          return res;
+        } catch (err: any) {
+          if (ep === primary && fallback && isOutage(err)) {
+            primaryDownUntil = Date.now() + 30_000;
+            endpointStats.failovers++; endpointStats.lastFailover = new Date().toISOString();
+            console.error(`[nemotron] ${primary.name} endpoint failed (${err?.status ?? err?.name}) — using ${fallback.name} for 30 s`);
+            const res = (await fallback.client.chat.completions.create({ ...params, model: fallback.model, stream: false } as any)) as OpenAI.Chat.Completions.ChatCompletion;
+            endpointStats[fallback.name]++;
+            return res;
+          }
+          throw err;
+        }
+      } catch (err: any) {
+        // Retry rate limits (429) and NVIDIA-side blips (5xx); give up fast on low-priority (simulated) work.
+        const retryable = err?.status === 429 || (err?.status >= 500 && err?.status < 600);
+        if (!retryable || attempt >= 2 || priority === "low") throw err;
+        await new Promise((r) => setTimeout(r, 300 * (attempt + 1) + Math.random() * 200));
+      }
+    }
+  } finally {
+    release();
+  }
+}
 
 /** Pulls the first JSON object out of model text (strips <think> blocks and code fences). */
 export function extractJson(text: string): unknown {
@@ -39,18 +120,20 @@ export async function chatJSON<T>(
   system: string,
   user: string,
   validate: (x: unknown) => T | null,
+  priority: Priority = "normal",
 ): Promise<T | null> {
   if (!nemotronEnabled()) return null;
   try {
-    const res = await getClient().chat.completions.create({
+    const res = await create({
       model: process.env.NEMOTRON_MODEL!,
       temperature: 0.2,
       max_tokens: 1024,
+      ...thinking(false),
       messages: [
         { role: "system", content: withPrefix(system + "\nRespond with a single JSON object only.") },
         { role: "user", content: user },
       ],
-    });
+    }, priority);
     return validate(extractJson(res.choices[0]?.message?.content ?? ""));
   } catch (err) {
     console.error("nemotron chatJSON error:", (err as Error).message);
@@ -59,18 +142,19 @@ export async function chatJSON<T>(
 }
 
 /** Plain text completion; null on error. */
-export async function chatText(system: string, user: string): Promise<string | null> {
+export async function chatText(system: string, user: string, priority: Priority = "normal"): Promise<string | null> {
   if (!nemotronEnabled()) return null;
   try {
-    const res = await getClient().chat.completions.create({
+    const res = await create({
       model: process.env.NEMOTRON_MODEL!,
       temperature: 0.3,
       max_tokens: 400,
+      ...thinking(false),
       messages: [
         { role: "system", content: withPrefix(system) },
         { role: "user", content: user },
       ],
-    });
+    }, priority);
     const text = (res.choices[0]?.message?.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
     return text || null;
   } catch (err) {
@@ -91,6 +175,33 @@ export interface ToolDef {
   run: (args: any, ctx: ToolContext) => Promise<unknown>;
 }
 
+/** Human-readable line for a tool call when the model didn't write its own thought. */
+function describe(tool: string, args: any, out: any): string {
+  try {
+    switch (tool) {
+      case "get_call_queue": {
+        const rows = Array.isArray(out) ? out : [];
+        const top = rows.slice(0, 3).map((r: any) => `${r.name} (${r.priority})`).join(", ");
+        return `Pulled call queue: ${rows.length} waiting${top ? ` — top: ${top}` : ""}`;
+      }
+      case "get_hex_risk": {
+        const hot = (Array.isArray(out) ? out : []).filter((h: any) => Number(h.risk) >= 0.5);
+        const max = Math.max(0, ...(Array.isArray(out) ? out : []).map((h: any) => Number(h.risk) || 0));
+        return hot.length ? `Checked flood risk: ${hot.length} high-risk zone(s), worst ${max.toFixed(2)}`
+                          : `Checked flood risk: highest ${max.toFixed(2)} — no high-risk zones yet`;
+      }
+      case "get_person_context": {
+        const p = out?.profile ?? {};
+        const bits = [p.age && `${p.age}`, p.medical_needs, p.mobility_limited && "limited mobility", p.household_size && `household of ${p.household_size}`].filter(Boolean);
+        return `Reviewing ${p.name ?? `#${args.person_id}`}${bits.length ? `: ${bits.join(", ")}` : ""}`;
+      }
+      case "get_call_result": return `Checking call result for #${args.person_id}: ${out?.triage?.status ?? out?.attempt?.status ?? "pending"}`;
+      case "escalate_to_911": return `Escalating #${args.person_id} to 911 review: ${args.reason ?? ""}`;
+      default: return `${tool}(${JSON.stringify(args).slice(0, 80)})`;
+    }
+  } catch { return `calling ${tool}`; }
+}
+
 const truncate = (v: unknown, n = 3500) => {
   const s = typeof v === "string" ? v : JSON.stringify(v);
   return s.length > n ? s.slice(0, n) + "…(truncated)" : s;
@@ -103,9 +214,13 @@ export async function runAgent(opts: {
   task: string;
   tools: ToolDef[];
   maxSteps?: number;
-}): Promise<{ ok: boolean; final: string | null; toolCalls: number }> {
+  /** If the model tries to finish without calling any of these, nudge it once to actually act. */
+  mustCallOneOf?: string[];
+}): Promise<{ ok: boolean; final: string | null; toolCalls: number; called: string[] }> {
   const { agent, alertId, tools, maxSteps = 10 } = opts;
-  if (!nemotronEnabled()) return { ok: false, final: null, toolCalls: 0 };
+  const called: string[] = [];
+  let nudged = false;
+  if (!nemotronEnabled()) return { ok: false, final: null, toolCalls: 0, called };
 
   const toolSpecs: ChatCompletionTool[] = tools.map((t) => ({
     type: "function",
@@ -116,13 +231,15 @@ export async function runAgent(opts: {
     { role: "user", content: opts.task },
   ];
   let toolCalls = 0;
+  const coordinatorThinking = agent === "coordinator" && process.env.NEMOTRON_COORDINATOR_THINKING === "true";
 
   try {
     for (let step = 0; step < maxSteps; step++) {
-      const res = await getClient().chat.completions.create({
+      const res = await create({
         model: process.env.NEMOTRON_MODEL!,
         temperature: 0.2,
-        max_tokens: 1024,
+        max_tokens: coordinatorThinking ? 4096 : 1024,
+        ...thinking(coordinatorThinking),
         messages,
         tools: toolSpecs,
         tool_choice: "auto",
@@ -130,11 +247,18 @@ export async function runAgent(opts: {
       const msg = res.choices[0]?.message;
       if (!msg) break;
       messages.push(msg);
-      const thought = (msg.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+      const reasoning = String((msg as any).reasoning_content ?? (msg as any).reasoning ?? "").trim();
+      const thought = ((msg.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim() || reasoning.slice(-400)).trim();
 
       if (!msg.tool_calls?.length) {
+        const acted = !opts.mustCallOneOf || called.some((c) => opts.mustCallOneOf!.includes(c));
+        if (!acted && !nudged) {
+          nudged = true;
+          messages.push({ role: "user", content: `You described a plan but haven't acted. Call ${opts.mustCallOneOf!.join(" or ")} now for each person you chose.` });
+          continue;
+        }
         await logAgent({ alertId, agent, thought: thought || "(done)" });
-        return { ok: true, final: thought, toolCalls };
+        return { ok: true, final: thought, toolCalls, called };
       }
 
       for (const call of msg.tool_calls) {
@@ -149,22 +273,27 @@ export async function runAgent(opts: {
           output = { error: (err as Error).message };
         }
         toolCalls++;
-        await logAgent({
-          alertId,
-          personId: args?.person_id ?? null,
-          agent,
-          thought: thought || `calling ${call.function.name}`,
-          tool: call.function.name,
-          input: args,
-          output,
-        });
+        called.push(call.function.name);
+        // place_voice_call / send_text are already logged by the pipeline ("Calling Maria") unless the model explained itself.
+        const selfLogged = ["place_voice_call", "send_text"].includes(call.function.name);
+        if (thought || !selfLogged) {
+          await logAgent({
+            alertId,
+            personId: args?.person_id ?? null,
+            agent,
+            thought: thought || describe(call.function.name, args, output),
+            tool: call.function.name,
+            input: args,
+            output,
+          });
+        }
         messages.push({ role: "tool", tool_call_id: call.id, content: truncate(output) });
       }
     }
     await logAgent({ alertId, agent, thought: `stopped after ${maxSteps} steps` });
-    return { ok: true, final: null, toolCalls };
+    return { ok: true, final: null, toolCalls, called };
   } catch (err) {
     await logAgent({ alertId, agent, thought: `Nemotron error, using fallback: ${(err as Error).message}` });
-    return { ok: false, final: null, toolCalls };
+    return { ok: false, final: null, toolCalls, called };
   }
 }

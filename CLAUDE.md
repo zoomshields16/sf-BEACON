@@ -14,7 +14,8 @@ over polish.
 
 ## Stack
 - Node 20 + TypeScript, Express, `pg` (node-postgres), `tsx` for dev, `dotenv`.
-- Postgres 16 + PostGIS (local, Postgres.app). Schema + query functions already exist in `db/`.
+- Postgres 17 + PostGIS 3.7 via Homebrew (`brew install postgresql@17 postgis`). Schema + query functions in `db/`.
+  `npm run db:setup` (rebuild + seed), `npm run db:reset` (wipe demo activity), `npm run test:db`.
 - Nemotron via NVIDIA's OpenAI-compatible API (`openai` npm package, baseURL
   `https://integrate.api.nvidia.com/v1`). Model name comes from env `NEMOTRON_MODEL`; pick a Nemotron
   model on build.nvidia.com that supports function calling.
@@ -22,13 +23,15 @@ over polish.
   Voice: Photon number ⇄ SIP ⇄ LiveKit Cloud; a LiveKit agent (`src/voice/agent.ts`) runs the call with
   **Nemotron as the live brain** (`src/voice/brain.ts`), LiveKit Inference for STT/TTS. Texts go out on the same number.
   Nemotron: hosted API first; Brev-hosted NIM via `NEMOTRON_BASE_URL` if latency/rate limits bite. Setup: `docs/voice-setup.md`.
-- Frontend (later): React + Vite + Leaflet map, polling the API every 2–3 s.
+- Frontend: `web/` React + Vite + Leaflet, polls the API every 2–3 s (`npm run web`; `?mock=1` = in-browser demo data).
 
 ## Database (already written, tested; do not rewrite without asking)
 Run order: `db/schema.sql` → `db/functions.sql` → `db/seed.sql`.
 Key functions:
 - `activate_alert(alert_id)` → starts an alert, creates `unreached` triage rows for everyone inside it.
-- `call_queue(alert_id, limit)` → next people to contact, priority-ordered; `next_channel` is voice, then sms after 2 attempts.
+- `call_queue(alert_id, limit)` → next people to contact, priority-ordered with `reasons[]`; `next_channel` is voice, then sms
+  after 2 attempts (backend turns sms into another call while texts are off). 4 unanswered attempts → `exhausted` (trigger).
+- `reset_demo(alert_id)` → wipe all activity for an alert. Seed: Braes Bayou flash flood, 1,500 people inside + 100 outside.
 - `person_context(person_id, alert_id)` → JSON: profile, SafeRoom, alert, triage, full call/text history.
 - `alert_stats(alert_id)` → total / unreached / safe / needs_help / critical / exhausted / high_risk_hexes.
 - `hex_risk(alert_id)` → crowdsourced risk per hexagon.
@@ -36,6 +39,7 @@ Key functions:
 - `upsert_nws_alert(...)` → ingest an NWS alert from its GeoJSON geometry.
 - Demo only: `simulate_reports(alert_id, lon, lat, radius_m, n)`.
 Tables the backend writes: `contact_attempts`, `conversation_history`, `triage`, `agent_log`, `escalations`.
+Column names are mirrored in `src/repo.ts` (the only file with SQL). Tests: `db/test.sql`.
 
 ## Agent design (Nemotron)
 Three roles, each a ReAct loop (reason → call tool → observe → repeat). Every step writes a row to
@@ -43,7 +47,9 @@ Three roles, each a ReAct loop (reason → call tool → observe → repeat). Ev
 - **Coordinator**: pulls `call_queue`, chooses who to contact and on which channel, re-plans when hex risk changes.
 - **Triage**: before a call, writes the script (3 fixed safety questions + 2–3 generated from
   `person_context`); after a call/text, extracts `{status, urgency_score, emergency_type, needs[], location_in_home, notes}` into `triage`.
-- **Escalation**: decides if a case goes to 911; builds the simulated RapidSOS payload into `escalations` (status `pending_review` for a human to confirm).
+- **Escalation**: **911 only for life-or-death** (triage `critical`) → simulated RapidSOS payload in `escalations` (kind `911`,
+  `pending_review` for a human). High-urgency needs (medication, power, transport) and welfare checks go to the State Farm
+  responder queue (kind `urgent_assist` / `welfare`) — never 911.
 
 Tools (TypeScript functions exposed via function calling): `get_call_queue`, `get_person_context`,
 `generate_call_script`, `place_voice_call`, `send_text`, `get_call_result`, `update_triage`,
@@ -55,6 +61,9 @@ Tools (TypeScript functions exposed via function calling): `get_call_queue`, `ge
 - Any answer indicating immediate danger → the agent says "Please hang up and call 911 now," triage is set `critical`, and an escalation is created.
 - If Nemotron output is invalid JSON or the API errors, fall back to a fixed per-disaster question list. A call never goes out broken.
 - Texts must reference the call when one happened ("On our call you said water was rising — is it still rising?") using `conversation_history`.
+  **Texting is currently OFF** (`TEXTS_ENABLED=false`, team decision) — calls only.
+- Never promise help is coming (`stripFalsePromises`). Only `LIVE_CALL_ALLOWLIST` numbers get real calls; everyone else is simulated.
+- `npm test` covers these rules; CI (GitHub Actions) runs it plus DB tests on every push.
 
 ## Conventions
 - All secrets in `.env` (never commit): `DATABASE_URL`, `NVIDIA_API_KEY`, `NEMOTRON_MODEL`,
@@ -69,9 +78,12 @@ db/                 schema.sql, functions.sql, seed.sql
 src/
   index.ts          Express app
   db.ts             pg Pool
-  routes/           alerts.ts, dashboard.ts, webhooks.ts
+  repo.ts           all SQL (parameterized)
+  routes/           alerts.ts, dashboard.ts, webhooks.ts, internal.ts (voice agent → API)
   agents/           coordinator.ts, triage.ts, escalation.ts, tools.ts, nemotron.ts
   services/         photon.ts, livekit.ts, mock.ts
   voice/            brain.ts (Nemotron call brain), agent.ts (LiveKit worker)
-web/                React dashboard (later)
+web/                React dashboard
+tests/              safety / call-brain / dialing tests (npm test)
+scripts/            setup-livekit-trunk.ts, test-call.ts
 ```

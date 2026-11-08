@@ -2,7 +2,7 @@
 import { Router } from "express";
 import { dropCallSession, getCallSession } from "../voice/brain.js";
 import { generateCallScript } from "../agents/triage.js";
-import { handleCallEnded, markCriticalNow } from "../agents/pipeline.js";
+import { flagForReview, handleCallEnded, markCriticalNow } from "../agents/pipeline.js";
 import { findAttempt, personContext } from "../repo.js";
 
 export const internal = Router();
@@ -32,12 +32,21 @@ internal.post("/calls/:attemptId/danger", async (req, res) => {
   res.json({ ok: true });
 });
 
+// Risk-model disagreement on a live call → human review (urgent assistance), never 911.
+internal.post("/calls/:attemptId/review", async (req, res) => {
+  const attempt = await findAttempt(req.params.attemptId);
+  if (!attempt) return res.status(404).json({ error: "unknown attempt" });
+  await flagForReview(attempt.alert_id, attempt.person_id, String(req.body?.text ?? ""), String(req.body?.reason ?? "Model disagreement"));
+  res.json({ ok: true });
+});
+
 internal.post("/calls/:attemptId/ended", async (req, res) => {
   res.json({ ok: true });
   dropCallSession(req.params.attemptId);
   await handleCallEnded({
     attemptId: req.params.attemptId,
     answered: Boolean(req.body?.answered),
+    outcome: req.body?.outcome,
     transcript: Array.isArray(req.body?.transcript) ? req.body.transcript : [],
   }).catch((e) => console.error("call ended", e));
 });

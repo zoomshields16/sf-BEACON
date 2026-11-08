@@ -16,8 +16,22 @@ export interface LogEntry {
   created_at: string;
 }
 
+export interface AlertSummary {
+  id: number;
+  nws_id: string | null;
+  event_type: string;
+  headline: string | null;
+  severity: string | null;
+  area_desc: string | null;
+  status: "pending" | "active" | "ended";
+  expires: string | null;
+  source: "demo" | "nws";
+  people_inside: number;
+}
+
 export interface Escalation {
   id: number;
+  kind?: "911" | "urgent_assist" | "welfare";
   person_id: string | number;
   reason: string;
   status: "pending_review" | "confirmed" | "dismissed";
@@ -40,6 +54,8 @@ const get = <T>(p: string) => request<T>("GET", p);
 const post = <T>(p: string, b?: unknown) => request<T>("POST", p, b ?? {});
 
 export const api = {
+  alerts: () => get<AlertSummary[]>(`/api/alerts`),
+  nwsSync: () => post<{ fetched: number; stored: unknown[]; alerts: AlertSummary[] }>(`/api/alerts/nws/sync`),
   health: () => get<{ ok: boolean; db: boolean; mock: boolean; nemotron: boolean }>("/health"),
   stats: (a: string) => get<Json>(`/api/alerts/${a}/stats`),
   people: (a: string) => get<Json>(`/api/alerts/${a}/map/people`),
@@ -49,6 +65,7 @@ export const api = {
   person: (a: string, p: string | number) => get<Json>(`/api/alerts/${a}/people/${p}`),
   autopilot: (a: string) => get<{ running: boolean }>(`/api/alerts/${a}/autopilot`),
   activate: (a: string) => post<Json>(`/api/alerts/${a}/activate`),
+  reset: (a: string) => post<Json>(`/api/alerts/${a}/reset`),
   setAutopilot: (a: string, on: boolean) => post<Json>(`/api/alerts/${a}/autopilot/${on ? "start" : "stop"}`),
   round: (a: string) => post<Json>(`/api/alerts/${a}/round`),
   contact: (a: string, p: string | number, channel: "voice" | "sms") =>

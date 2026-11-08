@@ -1,0 +1,12 @@
+#!/bin/sh
+# Blocks committing .env files or anything that looks like an API key/secret.
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+if echo "$staged" | grep -qE '(^|/)\.env($|\.)' && ! echo "$staged" | grep -qE '(^|/)\.env\.example$' ; then
+  bad=$(echo "$staged" | grep -E '(^|/)\.env($|\.)' | grep -vE '\.env\.example$')
+  if [ -n "$bad" ]; then echo "✋ Refusing to commit env file(s): $bad"; exit 1; fi
+fi
+if git diff --cached -U0 -- . ':!package-lock.json' | grep -E '^\+' | grep -qE 'nvapi-[A-Za-z0-9_-]{20,}|API[A-Za-z0-9]{12}\b|(SECRET|PASSWORD|API_KEY)=[^[:space:]]{8,}'; then
+  echo "✋ Staged changes look like they contain a key/secret. Move it to .env (gitignored)."
+  echo "   (bypass only if you're sure: git commit --no-verify)"
+  exit 1
+fi

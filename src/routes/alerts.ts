@@ -1,9 +1,26 @@
 import { Router } from "express";
-import { activateAlert, logAgent, simulateReports } from "../repo.js";
+import { activateAlert, alertsOverview, logAgent, resetDemo, simulateReports } from "../repo.js";
+import { syncNwsAlerts } from "../services/nws.js";
 import { coordinatorRound, isAutopilot, startAutopilot, stopAutopilot } from "../agents/coordinator.js";
-import { contactPerson } from "../agents/pipeline.js";
+import { contactPerson, forgetAlert } from "../agents/pipeline.js";
 
 export const alerts = Router();
+
+// Alert picker: demo + live NWS alerts, each with how many policyholders live inside it.
+alerts.get("/", async (_req, res) => res.json(await alertsOverview()));
+
+// Pull live alerts from the National Weather Service (default area NWS_AREA, or ?area=OK / ?lat=..&lon=..).
+alerts.post("/nws/sync", async (req, res) => {
+  const lat = Number(req.query.lat), lon = Number(req.query.lon);
+  const q = Number.isFinite(lat) && Number.isFinite(lon) ? { point: [lat, lon] as [number, number] }
+          : { area: typeof req.query.area === "string" ? req.query.area.toUpperCase().slice(0, 2) : undefined };
+  try {
+    const result = await syncNwsAlerts(q);
+    res.json({ ...result, alerts: await alertsOverview() });
+  } catch (e) {
+    res.status(502).json({ error: `NWS unavailable: ${(e as Error).message}` });
+  }
+});
 
 // Activate an alert and start the coordinator.
 alerts.post("/:id/activate", async (req, res) => {
@@ -13,6 +30,13 @@ alerts.post("/:id/activate", async (req, res) => {
   const autopilot = req.query.autopilot !== "false";
   if (autopilot) startAutopilot(id);
   res.json({ ok: true, result, autopilot });
+});
+
+// Demo rehearsal: stop the agent and wipe all activity for this alert (then press Activate again).
+alerts.post("/:id/reset", async (req, res) => {
+  stopAutopilot(req.params.id);
+  forgetAlert(req.params.id);          // otherwise people mid-call stay blocked for up to 12 min after the reset
+  res.json(await resetDemo(req.params.id));
 });
 
 alerts.post("/:id/autopilot/start", (req, res) => res.json({ started: startAutopilot(req.params.id) }));

@@ -31,6 +31,7 @@ a { color: var(--blue); }
 .brand-sub { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
 .alert-picker { display: flex; align-items: center; gap: 6px; }
 .alert-picker label { color: var(--muted); font-size: 12px; }
+.alert-picker select { max-width: 360px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
 .alert-picker input { width: 70px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
 .chips { display: flex; gap: 6px; }
 .chip { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); }
@@ -94,6 +95,11 @@ a { color: var(--blue); }
 .esc-meta, .esc-addr { color: var(--muted); font-size: 12px; }
 .esc-reason { margin: 6px 0; }
 .esc-actions { display: flex; gap: 8px; margin-top: 8px; }
+.esc-assist { background: #f59e0b10; border: 1px solid #f59e0b55; }
+.esc-tag-assist { color: var(--amber); }
+.btn-assist { background: var(--amber); border-color: var(--amber); color: #111; }
+.count-assist { background: var(--amber); color: #111; }
+.panel { max-height: 32%; }
 .esc-done { font-size: 12px; color: var(--muted); padding: 4px 2px; cursor: pointer; }
 
 /* agent log */

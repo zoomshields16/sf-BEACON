@@ -1,13 +1,14 @@
 // The contact lifecycle: reach out → result arrives (LiveKit agent or mock) → triage → escalate → follow up.
 import { composeOutreachText, composeReply, extractTriage, generateCallScript } from "./triage.js";
-import { maybeEscalate } from "./escalation.js";
+import { buildAssistPayload, maybeEscalate, welfareEscalation, welfareUrgency } from "./escalation.js";
 import { EMERGENCY_LINE } from "./safety.js";
 import { placeVoiceCall } from "../services/livekit.js";
 import { registerCallSession } from "../voice/brain.js";
+import type { CallOutcome } from "../voice/cases.js";
 import { sendText } from "../services/photon.js";
 import {
-  addMessage, ctxHistory, ctxName, ctxPhone, findAttempt, finishAttempt, getTriage, insertAttempt,
-  latestAttempt, logAgent, personContext, setAttemptExternalId, updateTriage,
+  addMessage, countUnreached, createEscalation, openEscalationFor, ctxHistory, ctxName, ctxPhone, findAttempt, finishAttempt, getTriage, insertAttempt,
+  latestAttempt, logAgent, setDoNotContact, personContext, setAttemptExternalId, updateTriage,
   type Channel, type Id, type Row, type TriageFields,
 } from "../repo.js";
 
@@ -19,7 +20,45 @@ const key = (alertId: Id, personId: Id) => `${alertId}:${personId}`;
 const phoneIndex = new Map<string, { alertId: Id; personId: Id }>();
 const normPhone = (p: string) => p.replace(/\D/g, "").slice(-10);
 
+
+// Outcomes where we didn't actually reach the person → logged as no_answer so the queue retries.
+const NOT_REACHED: CallOutcome[] = ["voicemail", "wrong_person", "no_answer"];
+const OUTCOME_NOTE: Partial<Record<CallOutcome, string>> = {
+  voicemail: "Reached voicemail — hung up without leaving a message, will retry",
+  silent: "Caller picked up but did not respond — treated as a possible emergency, escalated for responder review",
+  wrong_person: "Wrong person / wrong number — verify the phone on file",
+  callback: "Asked to be called back later — responsive but did not verify safety; not retried",
+  opt_out: "Asked us to stop calling — contact stopped (flag for a human; do not retry)",
+  language: "Caller doesn't speak English — flagged needs_help for an interpreter follow-up",
+  hangup: "Caller hung up before the safety questions were finished",
+};
+
+const maxAttempts = () => Number(process.env.MAX_CALL_ATTEMPTS ?? 4); // match call_queue's retry limit
+
+/** Out of retries and still no contact → rank high and queue a welfare check for a human. */
+async function welfareIfExhausted(alertId: Id, personId: Id) {
+  const n = await countUnreached(alertId, personId);
+  if (n < maxAttempts()) return;
+  const current = await getTriage(alertId, personId);
+  // The DB trigger may already have flipped them to 'exhausted' when this attempt was closed — that still qualifies.
+  if (current && !["unreached", "exhausted"].includes(current.status)) return; // reached some other way
+  const ctx = await personContext(personId, alertId);
+  // Stay 'exhausted' (dashboard: "Couldn't reach") but with urgency + a pending welfare-check escalation.
+  const t = await applyTriage(alertId, personId, {
+    status: "exhausted", urgency_score: welfareUrgency(ctx.profile ?? ctx.person ?? {}), emergency_type: "unreachable",
+    needs: ["welfare check"], location_in_home: null, notes: `Unreachable after ${n} call attempts; welfare check requested`,
+  });
+  await welfareEscalation(ctx, t, alertId, personId, n);
+}
+
 export const isInFlight = (alertId: Id, personId: Id) => inFlight.has(key(alertId, personId));
+
+/** Demo reset: forget in-flight calls and phone lookups for this alert (the DB rows are already gone). */
+export function forgetAlert(alertId: Id) {
+  const prefix = `${alertId}:`;
+  for (const [k, t] of inFlight) if (k.startsWith(prefix)) { clearTimeout(t); inFlight.delete(k); }
+  for (const [phone, ref] of phoneIndex) if (String(ref.alertId) === String(alertId)) phoneIndex.delete(phone);
+}
 
 function clearInFlight(alertId: Id, personId: Id) {
   const k = key(alertId, personId);
@@ -32,22 +71,30 @@ export const textsEnabled = () => process.env.TEXTS_ENABLED === "true";
 
 export async function contactPerson(alertId: Id, personId: Id, requested: Channel) {
   if (isInFlight(alertId, personId)) return { status: "skipped", detail: "contact already in progress" };
+  // Reserve the slot BEFORE any await, so a dashboard "Call now" and a coordinator round can't both dial this person.
+  const k = key(alertId, personId);
+  inFlight.set(k, setTimeout(() => inFlight.delete(k), IN_FLIGHT_TIMEOUT_MS));
+  const release = () => clearInFlight(alertId, personId);
+
+  if ((await getTriage(alertId, personId))?.do_not_contact) { release(); return { status: "skipped", detail: "person asked us to stop calling" }; }
   const channel: Channel = requested === "sms" && !textsEnabled() ? "voice" : requested;
 
   const ctx = await personContext(personId, alertId);
   const phone = ctxPhone(ctx) ?? (process.env.MOCK_CALLS === "true" ? `+1555${String(personId).padStart(7, "0")}` : undefined);
   if (!phone) {
+    release();
     await logAgent({ alertId, personId, agent: "coordinator", thought: "No phone number on file — skipping" });
     return { status: "failed", detail: "no phone" };
   }
   phoneIndex.set(normPhone(phone), { alertId, personId });
 
   const attemptId = await insertAttempt(alertId, personId, channel);
-  const k = key(alertId, personId);
+  clearTimeout(inFlight.get(k));
   inFlight.set(k, setTimeout(async () => {
     inFlight.delete(k);
     await finishAttempt(attemptId, "timeout").catch(() => {});
     await logAgent({ alertId, personId, agent: "system", thought: `Attempt #${attemptId} timed out with no result` });
+    await welfareIfExhausted(alertId, personId).catch(() => {});   // last retry timing out still triggers the welfare check
   }, IN_FLIGHT_TIMEOUT_MS));
 
   try {
@@ -69,6 +116,7 @@ export async function contactPerson(alertId: Id, personId: Id, requested: Channe
     clearInFlight(alertId, personId);
     await finishAttempt(attemptId, "failed");
     await logAgent({ alertId, personId, agent: "system", thought: `${channel} attempt failed: ${(err as Error).message}` });
+    await welfareIfExhausted(alertId, personId).catch(() => {});   // a failed final attempt still triggers the welfare check
     return { status: "failed", attemptId, detail: (err as Error).message };
   }
 }
@@ -85,6 +133,15 @@ async function applyTriage(alertId: Id, personId: Id, t: TriageFields) {
 }
 
 /** Called the moment danger is heard on a live call — escalate before the call even ends. */
+/** A model disagreement on a live call → urgent-assistance request so a human verifies. Never a 911 escalation. */
+export async function flagForReview(alertId: Id, personId: Id, userText: string, reason: string) {
+  if (await openEscalationFor(alertId, personId, "urgent_assist")) return;
+  const ctx = await personContext(personId, alertId);
+  const triage = (await getTriage(alertId, personId)) ?? { status: "unreached", urgency_score: 0, emergency_type: null, needs: [], location_in_home: null, notes: "" };
+  const id = await createEscalation(alertId, personId, reason, buildAssistPayload(ctx, triage as TriageFields, reason), "urgent_assist");
+  await logAgent({ alertId, personId, agent: "escalation", tool: "request_assistance", thought: `Human review requested (#${id}): ${reason}` });
+}
+
 export async function markCriticalNow(alertId: Id, personId: Id, userText: string, matched: string[]) {
   const ctx = await personContext(personId, alertId);
   const t = await applyTriage(alertId, personId, {
@@ -99,6 +156,7 @@ export interface CallResult {
   attemptId?: Id | null;
   externalId?: string | null;
   answered: boolean;
+  outcome?: CallOutcome; // how the call ended; missing = old behavior (answered ? completed : no_answer)
   transcript: { role: "agent" | "user"; content: string }[];
 }
 
@@ -109,9 +167,31 @@ export async function handleCallEnded(r: CallResult) {
   if (["completed", "no_answer"].includes(attempt.status)) return; // duplicate webhook
 
   clearInFlight(alertId, personId);
-  await finishAttempt(attemptId, r.answered ? "completed" : "no_answer");
-  if (!r.answered) {
-    await logAgent({ alertId, personId, agent: "coordinator", tool: "get_call_result", thought: "No answer — will retry; switches to text after 2 attempts" });
+  const outcome: CallOutcome = r.outcome ?? (r.answered ? "completed" : "no_answer");
+  const reached = outcome === "silent" || (r.answered && !NOT_REACHED.includes(outcome));
+  await finishAttempt(attemptId, reached ? "completed" : "no_answer");
+  const note = OUTCOME_NOTE[outcome] ?? (!r.answered ? "No answer — will retry (marked exhausted after 4 attempts)" : null);
+  if (note) await logAgent({ alertId, personId, agent: "coordinator", tool: "get_call_result", thought: note, output: { outcome } });
+  if (outcome === "opt_out") await setDoNotContact(alertId, personId);
+  if (outcome === "silent") {
+    // Unresponsive on a live line is the strongest "not okay" signal we get. Escalation is pending_review, so a human confirms.
+    await markCriticalNow(alertId, personId, "Line answered but the caller stopped responding", ["unresponsive"]);
+    return;
+  }
+  if (!reached && outcome !== "opt_out") await welfareIfExhausted(alertId, personId);
+  if (!reached || outcome === "opt_out") return;
+  if (outcome === "callback") {
+    await applyTriage(alertId, personId, {
+      status: "needs_help", urgency_score: 30, emergency_type: "unverified", needs: [],
+      location_in_home: null, notes: "Answered and spoke but asked to be called back later; safety not verified",
+    });
+    return;
+  }
+  if (outcome === "language") {
+    await applyTriage(alertId, personId, {
+      status: "needs_help", urgency_score: 60, emergency_type: "language_barrier", needs: ["interpreter"],
+      location_in_home: null, notes: "Caller does not speak English; needs a translator follow-up",
+    });
     return;
   }
 
@@ -120,7 +200,13 @@ export async function handleCallEnded(r: CallResult) {
   const transcript = r.transcript.map((l) => `${l.role}: ${l.content}`).join("\n");
   const userText = r.transcript.filter((l) => l.role === "user").map((l) => l.content).join("\n");
 
-  const triage = await applyTriage(alertId, personId, await extractTriage(ctx, transcript, userText, alertId, personId));
+  let extracted = await extractTriage(ctx, transcript, userText, alertId, personId);
+  // Hung up before all 3 safety questions were answered → we can't call them "safe". Keep them on a responder's list.
+  if (outcome === "hangup" && extracted.status === "safe") {
+    extracted = { ...extracted, status: "needs_help", urgency_score: Math.max(extracted.urgency_score, 40), emergency_type: "unverified",
+                  notes: `Hung up before the safety questions were finished; safety not verified. ${extracted.notes}`.trim() };
+  }
+  const triage = await applyTriage(alertId, personId, extracted);
   await maybeEscalate(ctx, triage, alertId, personId);
 
   // Belt-and-braces: a critical call also gets the 911 instruction in writing.
