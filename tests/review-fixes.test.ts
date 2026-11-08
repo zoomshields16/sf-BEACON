@@ -1,7 +1,7 @@
 // Regression tests for the code-review findings (2026-11-07).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-const { detectDanger, isConcreteThreat } = await import("../src/agents/safety.js");
+const { detectDanger, isConcreteThreat, stripCoveragePromises } = await import("../src/agents/safety.js");
 const { classify } = await import("../src/voice/cases.js");
 
 test("unpunctuated speech-to-text still triggers danger", () => {
@@ -69,4 +69,30 @@ test("PyTorch risk model loads and its forward pass returns a probability distri
   const total = Object.values(probs).reduce((a: number, b: any) => a + b, 0);
   assert.ok(Math.abs(total - 1) < 1e-6);
   assert.deepEqual(Object.keys(probs), ["life_threat", "urgent", "routine", "safe"]);
+});
+
+test("a rejected model danger flag never produces an empty reply / silent hang-up", async () => {
+  // regression for the 'Dorothy' simulation; exercised end-to-end in scripts/simulate-clients.ts
+  const { CallBrain } = await import("../src/voice/brain.js");
+  assert.ok(CallBrain);
+});
+
+test("a medical-device battery with hours left is NOT a life threat; a device that stopped is", () => {
+  assert.equal(isConcreteThreat("oxygen battery low with no backup", "my oxygen machine battery says about four hours left"), false);
+  assert.equal(isConcreteThreat("oxygen failed", "my oxygen machine just stopped"), true);
+});
+
+test("never promise insurance coverage on a safety call", () => {
+  const r = stripCoveragePromises("I'm glad everyone is safe. For your car, State Farm can help with that claim — a local agent will follow up.");
+  assert.ok(!/can help with that claim/i.test(r), r);
+  assert.match(r, /A State Farm agent will follow up about your claim/);
+  assert.equal(stripCoveragePromises("Glad you're safe. Is anyone injured?"), "Glad you're safe. Is anyone injured?");
+  assert.ok(!/covered/.test(stripCoveragePromises("Don't worry, your car is covered.")));
+});
+
+test("a fall where the person can't get up always triggers (keyword)", () => {
+  for (const t of ["My husband fell down the stairs and he's not getting up.", "she fell off the ladder and can't move", "I can't get him up"]) {
+    assert.equal(detectDanger(t).danger, true, t);
+  }
+  assert.equal(detectDanger("I fell asleep on the couch, we're fine.").danger, false);
 });

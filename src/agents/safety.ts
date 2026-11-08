@@ -86,7 +86,7 @@ export function safetyTips(eventType: string, profile: { medical_needs?: string 
 const DANGER_PATTERNS: [string, RegExp][] = [
   ["trapped", /\b(trapped|stuck|can'?t get out|pinned)\b/i],
   ["breathing", /can'?t breathe|not breathing|trouble breathing|unconscious|unresponsive|passed out|can'?t (wake|rouse) (him|her|them|my \w+)( up)?|won'?t wake up|not waking up|(turning|turned|lips are|lips) blue|limp and|seizure|convuls\w*|stopped breathing/i],
-  ["injury", /bleeding|badly hurt|seriously (hurt|injured)|broken (bone|leg|arm|hip)|chest pain|heart attack|stroke/i],
+  ["injury", /bleeding|badly hurt|seriously (hurt|injured)|broken (bone|leg|arm|hip)|chest pain|heart attack|stroke|(fell|fallen|fall) (down|off|through|from)[^.!?]{0,50}(not (getting|get) up|can'?t (get up|move)|isn'?t moving|won'?t (move|respond|wake))|(he|she|they)('s| is| are) not getting up|can'?t get (him|her|them) up/i],
   // Water INSIDE or at a dangerous depth — not "water is up to the second step outside".
   ["water", /water('s| is)? (rising|coming in|coming into|pouring in)|water('s| is)? (up to|at|over) (my|our|his|her|their|the) (knees?|waist|chest|neck|shoulders|windows?|ceiling|first floor|second floor|door ?knob)|water (in|inside) the (house|home|living room|kitchen|bedroom)|flooding (in|inside)|swept/i],
   ["structure", /roof (collapsed|caved|caving)|house (collapsed|is collapsing)|ceiling fell/i],
@@ -139,7 +139,7 @@ export function detectDanger(userText: string): { danger: boolean; matched: stri
 
 // Nemotron's danger flag only counts if the caller's words (or the model's stated reason) name a CONCRETE life threat.
 // "Lots of water around and thunder" is weather, not an emergency — the model alone must not trigger the 911 line.
-const LIFE_THREAT = /\b(trapped|stuck (inside|upstairs|in the)|can'?t get out|pinned|seriously (hurt|injured)|badly (hurt|injured)|injured badly|bleed\w*|unconscious|unresponsive|not respond\w*|isn'?t (answering|responding|moving|breathing)|collaps\w*|passed out|chest pain|heart attack|stroke|seizure|drown\w*|swept|fell (down|off|through)|has fallen|can'?t (move|get up|breathe|wake)|(trouble|hard|difficulty) breathing|not breathing|stopped breathing|on fire|flames|smoke (is )?(inside|in the|coming in)|smell gas|gas leak|roof (collapsed|caved|fell)|ceiling (collapsed|fell|caved)|(oxygen|concentrator|ventilator|cpap|dialysis|life.?support)[^.!?]{0,40}(stopped|died|dead|ran out|running out|out of|failing|failed|not working|won'?t (work|turn on)|battery (is )?(dead|dying|low|almost))|electrocut\w*|downed? power line|send help|help me|we'?re dying|is dying|water (is )?(inside|in the (house|home|room|living room|kitchen|bedroom)|coming in|rising|pouring)|flood\w* (inside|in the house))\b/i;
+const LIFE_THREAT = /\b(trapped|stuck (inside|upstairs|in the)|can'?t get out|pinned|seriously (hurt|injured)|badly (hurt|injured)|injured badly|bleed\w*|unconscious|unresponsive|not respond\w*|isn'?t (answering|responding|moving|breathing)|collaps\w*|passed out|chest pain|heart attack|stroke|seizure|drown\w*|swept|fell (down|off|through)|has fallen|can'?t (move|get up|breathe|wake)|(trouble|hard|difficulty) breathing|not breathing|stopped breathing|on fire|flames|smoke (is )?(inside|in the|coming in)|smell gas|gas leak|roof (collapsed|caved|fell)|ceiling (collapsed|fell|caved)|(oxygen|concentrator|ventilator|cpap|dialysis|life.?support)[^.!?]{0,40}(stopped|died|is dead|ran out|failed|not working|won'?t (work|turn on)|shut off|battery (is |just )?(dead|died|almost dead|about to die)|only (a few )?minutes left)|electrocut\w*|downed? power line|send help|help me|we'?re dying|is dying|water (is )?(inside|in the (house|home|room|living room|kitchen|bedroom)|coming in|rising|pouring)|flood\w* (inside|in the house))\b/i;
 
 export function isConcreteThreat(...texts: (string | undefined)[]): boolean {
   return texts.some((t) => Boolean(t) && LIFE_THREAT.test(t!));
@@ -147,6 +147,16 @@ export function isConcreteThreat(...texts: (string | undefined)[]): boolean {
 
 // The agent must never imply rescue is coming — only a human responder can promise that.
 const FALSE_PROMISES = /\s*[^.!?]*\b(help is (on (the|its) way|coming)|until help arrives|(responders|rescuers|someone|help|they)('s| is| are| will be)? (on (the|their|its) way|coming to you|being sent|be there soon)|we('re| are| will be)? (sending|dispatching) (help|someone|responders)|help will (arrive|be there))\b[^.!?]*[.!?]?/gi;
+
+// Never promise insurance coverage on a safety call — that's for a licensed agent.
+const COVERAGE_PROMISE = /[^.!?]*\b((is|are|will be|should be|would be) covered|we('ll| will) (cover|pay)|state farm (can|will) (cover|pay|help with (that|this|your) claim|take care of (that|it))|(your|the) (policy|insurance) (covers|will cover))\b[^.!?]*[.!?]?/gi;
+
+/** Replaces any coverage promise with the standard follow-up line. */
+export function stripCoveragePromises(text: string): string {
+  return COVERAGE_PROMISE.test(text)
+    ? text.replace(COVERAGE_PROMISE, " A State Farm agent will follow up about your claim.").replace(/\s{2,}/g, " ").trim()
+    : text;
+}
 
 /** Removes any sentence that promises help is coming. Falls back to a neutral line if nothing is left. */
 export function stripFalsePromises(text: string): string {

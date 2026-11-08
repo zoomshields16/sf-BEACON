@@ -32,7 +32,7 @@ Never repeat the fixed questions. JSON: {"questions": ["..."]}`,
     opening: `Hi ${ctxName(ctx)}, this is the State Farm SafeNet assistant. There's a ${event} in your area right now, and I'm calling to make sure you and everyone in your home are safe. I have a few quick questions.`,
     questions: [...CORE_QUESTIONS, ...followups],
     // Non-emergency calls end with standard storm-safety tips (emergencies end on the 911 line instead).
-    closing: `Thank you. Before you go, a few safety tips: ${safetyTips(event, ctx.profile ?? {})} If anything changes or you are in danger, call 911. A State Farm responder will follow up.`,
+    closing: `Thank you. Before you go — try to stay calm and take slow, deep breaths; you're doing the right things. A few safety tips: ${safetyTips(event, ctx.profile ?? {})} If anything changes or you are in danger, call 911. A State Farm responder will follow up.`,
     source,
   };
   await logAgent({

@@ -7,7 +7,7 @@
 //   3. If Nemotron is slow or returns junk, we speak the next scripted question instead.
 import { chatJSON, type Priority } from "../agents/nemotron.js";
 import { classifyRisk, riskModelAvailable } from "../agents/risk-model.js";
-import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger, isConcreteThreat, stripFalsePromises } from "../agents/safety.js";
+import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger, isConcreteThreat, stripCoveragePromises, stripFalsePromises } from "../agents/safety.js";
 import type { CallScript } from "../agents/triage.js";
 import { CASE_REPLIES, SILENCE_GIVEUP, classify, type CallCase, type CallOutcome } from "./cases.js";
 import { ctxEventType, ctxName, logAgent, type Id, type Row } from "../repo.js";
@@ -43,13 +43,22 @@ const DANGER_RULE = `Think critically first: write threat_assessment (what is ac
 whether it could kill or seriously injure someone within the next hour — or is it weather, property, past or resolved).
 Then set danger=true ONLY if the caller's LAST message describes IMMEDIATE danger to life right now:
 trapped, unconscious/unresponsive, not breathing, severe bleeding, collapse, chest pain/stroke, rising water inside,
-fire, gas leak, structure collapse, life-support equipment about to fail, or asking for emergency help.
+fire, gas leak, structure collapse, life-support equipment that has ALREADY stopped or failed, or asking for emergency help.
+A medical device battery with hours left is URGENT, not danger — set danger=false for it.
 Property damage, outages, or problems already resolved are NOT immediate danger.
 NOT danger (danger=false): "lots of water around", "I heard thunder", "the street is flooded", "power is out", "I'm scared",
 "water is up to the steps outside". Weather and flooding OUTSIDE the home are not, by themselves, a threat to life.`;
 const MAX_TURNS = 14; // hard cap so a call can never run on forever
 // "I don't think so", "not sure", "might have to check" — an uncertain answer, not a confirmed no.
 const UNSURE = /\b(don'?t think so|not sure|i don'?t know|dunno|might (have to|need to) (go )?check|have to check|need to check|i'?ll check|maybe|possibly|not certain)\b/i;
+// The caller is done talking: "no, that's it", "that's all", "nope, we're good", "nothing else".
+const WRAP_UP = /^\s*((okay|ok|alright|all right|yeah|yes)[,.!\s]+)?(no|nope|nah)?[,.!\s]*(that'?s (it|all|everything)|nothing else|we'?re (good|fine|all good)|i'?m (good|fine)|all good|no,? (thank you|thanks))[\s.!,]*(thank(s| you)[\s\w,.!]*)?$/i;
+// Caller sounds frightened (not a danger by itself) → a human-sounding calming line, independent of the model.
+const DISTRESS = /\b(scared|terrified|so scared|frightened|panick\w*|freaking out|nervous|anxious|can'?t stop shaking|crying|i'?m shaking|worried sick|so loud)\b/i;
+const CALMING = "It's okay to feel scared — you're doing the right thing by staying put. Take a slow, deep breath with me.";
+const VARIED_ACKS = ["Okay, thank you.", "Got it.", "Thanks for telling me.", "Alright, that helps.", "Okay."];
+// Caller couldn't hear or understand → repeat the current question clearly (never count it as an answer).
+const HEARING = /\b(speak up|louder|can'?t hear( you)?|didn'?t (catch|hear) (that|you)|what did you say|repeat (that|the question|yourself)|say (that|it) again|come again|you'?re breaking up|bad connection)\b/i;
 const NON_ANSWER = /^(hello|hi|hey|yes\?|what|huh|sorry|pardon|who is this|who's this|who is calling|can you repeat( that)?|say that again)[\s?.!,]*$/i;
 const ACK_TIMEOUT_MS = Number(process.env.VOICE_ACK_TIMEOUT_MS ?? 1500);
 const TURN_TIMEOUT_MS = Number(process.env.VOICE_TURN_TIMEOUT_MS ?? 3500);
@@ -83,6 +92,26 @@ export class CallBrain {
     private onReview?: (userText: string, reason: string) => Promise<void>,
   ) {}
   private reviewed = false;
+  private lastAck = "";
+  private calmed = false;
+  private ackRotation = 0;
+
+  /** Human-sounding acknowledgement: no word-for-word repeats, at most one "deep breath" per call, no coverage promises. */
+  private humanize(ack: string, lastUser: string): string {
+    let a = stripCoveragePromises(stripFalsePromises(ack));
+    const breathing = /[^.!?]*\bbreath\w*[^.!?]*[.!?]?/gi;
+    if (breathing.test(a)) {
+      if (this.calmed && !DISTRESS.test(lastUser)) a = a.replace(breathing, "").trim();
+      else this.calmed = true;
+    }
+    const norm = (x: string) => x.toLowerCase().replace(/[^a-z ]/g, "").trim();
+    const firstClause = (x: string) => norm(x).split(" ").slice(0, 5).join(" ");
+    if (!a || norm(a) === norm(this.lastAck) || (this.lastAck && firstClause(a) === firstClause(this.lastAck))) {
+      a = VARIED_ACKS[this.ackRotation++ % VARIED_ACKS.length];
+    }
+    this.lastAck = a;
+    return a;
+  }
 
   /** Third opinion: PyTorch Lightning classifier on Nemotron embeddings (ml/). Real calls only; ~1 s budget. */
   private async riskOpinion(text: string) {
@@ -161,7 +190,7 @@ export class CallBrain {
       this.log(`DANGER on live call [${matched.join(", ")}] — giving 911 instruction and escalating`, { lastUser });
       await this.onDanger?.(lastUser, matched).catch((e) => console.error("onDanger", e));
     }
-    return { say: `${EMERGENCY_LINE} I'm alerting emergency responders to your address right now.`, endCall: true };
+    return { say: `${EMERGENCY_LINE} Stay as calm as you can — I'm alerting emergency responders to your address right now.`, endCall: true };
   }
 
   /** Simulated calls skip Nemotron for conversation turns unless SIM_CALLS_USE_NEMOTRON=true (saves API quota). */
@@ -177,6 +206,9 @@ export class CallBrain {
   private async normalReply(transcript: Turn[]): Promise<{ reply: BrainReply; danger?: string }> {
     // Greetings / confusion aren't answers — re-introduce and repeat the current question.
     const lastUser = [...transcript].reverse().find((t) => t.role === "user")?.content.trim() ?? "";
+    if (HEARING.test(lastUser) && this.lastAsked) {
+      return { reply: { say: `Sorry about that — I'll speak clearly. ${this.lastAsked}`, endCall: false } };
+    }
     if (NON_ANSWER.test(lastUser) && this.lastAsked) {
       return { reply: { say: `This is the State Farm SafeNet assistant, checking on your safety. ${this.lastAsked}`, endCall: false } };
     }
@@ -191,11 +223,16 @@ export class CallBrain {
       // Unsure whether anyone is hurt → tell them to check now, in code (never left to the model).
       const nudge = answered === CORE_QUESTIONS[1] && UNSURE.test(lastUser)
         ? "Please check on everyone in your home right now. If anyone is hurt, hang up and call 911. "
-        : "";
-      return { reply: { say: `${nudge || (r?.ack ?? "Thank you.") + " "}${q}`, endCall: false }, danger: r?.danger };
+        : DISTRESS.test(lastUser) && !/breath/i.test(r?.ack ?? "") ? `${CALMING} ` : "";
+      if (nudge.startsWith(CALMING)) this.calmed = true;
+      const ack = nudge ? "" : this.humanize(r?.ack ?? "Thank you.", lastUser) + " ";
+      return { reply: { say: `${nudge}${ack}${q}`, endCall: false }, danger: r?.danger };
     }
 
-    // Follow-up phase: Nemotron leads, bounded by MAX_FOLLOWUPS.
+    // Follow-up phase. The caller saying they're done ends the call — enforced in code, not left to the model.
+    if (WRAP_UP.test(lastUser)) return { reply: { say: this.closing(), endCall: true } };
+
+    // Nemotron leads the follow-ups, bounded by MAX_FOLLOWUPS.
     if (this.followups < MAX_FOLLOWUPS) {
       const planned = this.s.script.questions.slice(CORE_QUESTIONS.length);
       const llm = !this.useModel ? null : await withTimeout(
@@ -203,7 +240,11 @@ export class CallBrain {
           `You are the State Farm SafeNet assistant on a LIVE phone call with a policyholder during a disaster.
 The fixed safety questions are done. Now ask at most ${MAX_FOLLOWUPS - this.followups} more short follow-up question(s), ONE per turn,
 responding naturally to what they just said. Planned follow-ups (use, adapt, or skip): ${JSON.stringify(planned)}.
-Rules: under 30 words, warm and calm, never promise that help or responders are coming, no medical/legal/claims advice (say a State Farm agent will follow up on claims).
+Sound like a kind, calm human — natural and conversational, never robotic. Under 40 words.
+If the caller asks something, answer with general, widely accepted safety guidance first (follow local officials, move to
+higher ground, avoid floodwater and downed power lines, keep phone charged, check ready.gov), then ask your question.
+If they sound scared, reassure them and suggest a slow, deep breath before continuing.
+Never promise that help or responders are coming; no medical/legal/claims advice (say a State Farm agent will follow up on claims).
 If you have what responders need, OR the caller says "that's all", "no", "nothing else", "I'm fine", set done=true and say a brief thank-you.
 Only ask about things in the caller profile or things they mentioned — never invent pets, family members or equipment.
 If the caller doesn't recognize something from their profile ("what's that?", "I don't have one"), accept it and move on — don't insist.
@@ -218,13 +259,17 @@ JSON: {"threat_assessment": "one sentence: what is happening and is anyone's lif
       if (!this.s.simulated) countTurn(Boolean(llm));
       if (llm) {
         const danger = llm.danger === true ? String(llm.danger_reason ?? llm.threat_assessment ?? "immediate danger") : undefined;
-        if (danger) return { reply: { say: "", endCall: true }, danger };
-        llm.say = stripFalsePromises(llm.say);
-        this.log(llm.done ? "Nemotron: enough information — wrapping up" : "Nemotron chose next follow-up", { say: llm.say });
-        if (llm.done) return { reply: { say: `${llm.say} ${this.s.script.closing}`, endCall: true } };
+        llm.say = stripCoveragePromises(stripFalsePromises(llm.say));
+        // Never repeat the exact question we just asked — treat it as "nothing more to ask".
+        const norm = (x: string) => x.toLowerCase().replace(/[^a-z ]/g, "").trim();
+        const repeat = Boolean(this.lastAsked) && norm(llm.say).includes(norm(this.lastAsked).slice(-40));
+        this.log(llm.done || repeat ? "Nemotron: enough information — wrapping up" : "Nemotron chose next follow-up", { say: llm.say });
+        // If the model flagged danger, reply() checks it against the life-threat guard; if the guard rejects it,
+        // this normal reply is used — it must never be empty (that silently hung up on a caller in testing).
+        if (llm.done || repeat) return { reply: { say: this.closing(repeat ? "" : llm.say), endCall: true }, danger };
         this.followups++;
         this.lastAsked = llm.say;
-        return { reply: { say: llm.say, endCall: false } };
+        return { reply: { say: llm.say, endCall: false }, danger };
       }
       // (3) Fallback: next scripted question.
       const next = planned[this.followups++];
@@ -235,19 +280,32 @@ JSON: {"threat_assessment": "one sentence: what is happening and is anyone's lif
       }
     }
 
-    return { reply: { say: this.s.script.closing, endCall: true } };
+    return { reply: { say: this.closing(), endCall: true } };
+  }
+
+  /** Closing line, optionally after the model's own thank-you — without "Thank you. Thank you." */
+  private closing(lead = ""): string {
+    const c = this.s.script.closing;
+    const dupThanks = /thank(s| you)[^.!?]*[.!?]?\s*$/i.test(lead) && /^thank you\.\s*/i.test(c);
+    return `${lead ? lead + " " : ""}${dupThanks ? c.replace(/^thank you\.\s*/i, "") : c}`.trim();
   }
 
   private ack(transcript: Turn[]): Promise<{ ack: string; danger?: string } | null> {
     if (!this.useModel) return Promise.resolve(null);
     return withTimeout(
       chatJSON(
-        `You are on a live disaster check-in call. Write a very short, calm acknowledgement (max 12 words) of what the
-caller just said. Do NOT ask a question. Never promise that help is coming. Don't repeat your previous acknowledgement word for word.
+        `You are a warm, calm State Farm check-in caller on a live phone call during a disaster. Reply to what the caller
+just said the way a kind human would — natural, contractions, no robotic phrasing like "I understand you are safe".
+- Normally: a short acknowledgement (max 15 words).
+- If they asked a question: answer it briefly with general, widely accepted safety guidance (max 2 sentences; e.g. follow
+  local officials' evacuation orders, move to higher ground, avoid floodwater and downed lines, check ready.gov or local news).
+- If they sound scared or upset: reassure them and suggest a slow, deep breath (max 2 sentences).
+Do NOT ask a question (the next safety question is added after you). Never promise that help or responders are coming.
+No medical, legal or insurance-coverage advice (say a State Farm agent will follow up). Don't repeat your previous reply.
 ${DANGER_RULE}
 JSON: {"threat_assessment": "one sentence: what is happening and is anyone's life at risk in the next hour?", "ack": "...", "danger": boolean, "danger_reason": "max 8 words"}`,
         transcriptText(transcript.slice(-4)),
-        (x: any) => (typeof x?.ack === "string" && x.ack.length < 120 && !x.ack.includes("?")
+        (x: any) => (typeof x?.ack === "string" && x.ack.length < 320 && !x.ack.includes("?")
           ? { ack: stripFalsePromises(x.ack as string), danger: x.danger === true ? String(x.danger_reason ?? x.threat_assessment ?? "immediate danger") : undefined }
           : null),
         this.priority,

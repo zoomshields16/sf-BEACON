@@ -56,20 +56,22 @@ Be strict and skeptical: responders are scarce, so mark urgent ONLY if one of th
   3. A child, elderly or disabled person has no heat/cooling in dangerous temperatures tonight.
 NOT urgent (routine follow-up): power out but okay, supplies for a day or more, insulin without ice (room-temperature
 insulin lasts weeks), property damage, anxiety, wants information, needs a ride "later" or "if roads clear".
-Estimate hours_until_harm (null if no concrete deadline). urgent must be false if hours_until_harm is null or > 12.
+Estimate hours_until_harm (null if no concrete deadline). urgent must be false if hours_until_harm is null or 12 or more.
 Examples:
   "power out, out of ice for my insulin, otherwise okay" → {"urgent": false, "hours_until_harm": null, "reason": "Insulin is stable at room temperature for weeks; routine check on power."}
   "insulin needs to stay cold, 87, wheelchair, power out" → {"urgent": false, "hours_until_harm": null, "reason": "Insulin is fine unrefrigerated; mobility needs a routine follow-up."}
   "oxygen machine battery has about 3 hours left, power is out" → {"urgent": true, "hours_until_harm": 3, "reason": "Oxygen battery runs out in ~3 h; needs power or relocation."}
   "heat is out, 15 degrees tonight, we're both in our 80s" → {"urgent": true, "hours_until_harm": 10, "reason": "Elderly couple without heat in freezing temperatures tonight."}
   "might need a ride later if the roads clear" → {"urgent": false, "hours_until_harm": null, "reason": "Transport request with no deadline."}
+  "roof is leaking over the kitchen but we're managing, not sure if anyone got hurt" → {"urgent": false, "hours_until_harm": null, "reason": "Roof leak, managing; caller told to check on everyone."}
+  "water is in the street but the house is dry, I'm upstairs, I use a walker" → {"urgent": false, "hours_until_harm": null, "reason": "Home dry and caller upstairs; routine mobility follow-up."}
 JSON: {"urgent": boolean, "hours_until_harm": number|null, "reason": "one short sentence for the responder"}`,
     JSON.stringify({ triage, profile: ctx.profile ?? null, saferoom: ctx.saferoom ?? null }).slice(0, 3000),
     (x: any) => {
       if (typeof x?.urgent !== "boolean" || typeof x?.reason !== "string") return null;
       const hours = typeof x.hours_until_harm === "number" ? x.hours_until_harm : null;
       // Enforce the rule in code too: no concrete deadline within 12 h → not urgent.
-      return { urgent: x.urgent && hours !== null && hours <= 12, reason: x.reason, hours };
+      return { urgent: x.urgent && hours !== null && hours < 12, reason: x.reason, hours };
     },
   );
 }
