@@ -13,7 +13,8 @@ import { SILENCE_REMINDERS, type CallOutcome } from "./cases.js";
 
 const SILENCE_AFTER_S = Number(process.env.VOICE_SILENCE_AFTER_S ?? 10); // quiet this long → "are you still there?"
 
-const API = process.env.INTERNAL_API_URL ?? `http://localhost:${process.env.PORT ?? 3000}`;
+// Trailing slashes stripped so "http://localhost:3000/" doesn't produce "//internal/..." URLs.
+const API = (process.env.INTERNAL_API_URL || `http://localhost:${process.env.PORT ?? 3000}`).replace(/\/+$/, "");
 
 async function api<T = any>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${API}${path}`, {
