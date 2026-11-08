@@ -7,7 +7,7 @@ import { ReadableStream } from "node:stream/web";
 import { cli, defineAgent, ServerOptions, voice, type JobContext, type llm } from "@livekit/agents";
 import * as openai from "@livekit/agents-plugin-openai";
 import { RoomServiceClient } from "livekit-server-sdk";
-import { CallBrain, type BrainReply, type CallSession, type Turn } from "./brain.js";
+import { CallBrain, liveCallStats, type BrainReply, type CallSession, type Turn } from "./brain.js";
 import { CORE_QUESTIONS } from "../agents/safety.js";
 import { SILENCE_REMINDERS, type CallOutcome } from "./cases.js";
 
@@ -136,7 +136,8 @@ export default defineAgent({
       if (finished) return;
       finished = true;
       console.log(`\n===== CALL TRANSCRIPT (${ctx.room.name}) =====\n` +
-        agent.transcript.map((t) => `${t.role === "agent" ? "AGENT" : "CALLER"}: ${t.content}`).join("\n") + "\n=====\n");
+        agent.transcript.map((t) => `${t.role === "agent" ? "AGENT" : "CALLER"}: ${t.content}`).join("\n") +
+        `\n===== BRAIN: ${liveCallStats.nemotronTurns} turn(s) by Nemotron, ${liveCallStats.fallbackTurns} scripted fallback =====\n`);
       if (attempt == null) return;
       const answered = agent.transcript.some((t) => t.role === "user");
       // "silent" ONLY when the brain gave up after silence reminders on a live line. Never said a word and hung up

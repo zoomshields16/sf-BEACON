@@ -6,6 +6,7 @@ import { dashboard } from "./routes/dashboard.js";
 import { webhooks } from "./routes/webhooks.js";
 import { internal } from "./routes/internal.js";
 import { nemotronEnabled } from "./agents/nemotron.js";
+import { liveCallStats } from "./voice/brain.js";
 import { startNwsPolling } from "./services/nws.js";
 import { closeOrphanedAttempts } from "./repo.js";
 
@@ -24,7 +25,13 @@ app.get("/health", async (_req, res) => {
     await pool.query("select 1");
     db = true;
   } catch {}
-  res.status(db ? 200 : 500).json({ ok: db, db, mock: process.env.MOCK_CALLS === "true", nemotron: nemotronEnabled() });
+  res.status(db ? 200 : 500).json({
+    ok: db, db, mock: process.env.MOCK_CALLS === "true", nemotron: nemotronEnabled(),
+    nemotron_endpoint: process.env.NEMOTRON_BASE_URL || "https://integrate.api.nvidia.com/v1 (hosted)",
+    nemotron_model: process.env.NEMOTRON_MODEL ?? null,
+    // Turns on REAL calls handled in this API process (mock calls excluded). The LiveKit agent prints its own.
+    live_call_turns: liveCallStats,
+  });
 });
 
 app.use("/api/alerts", alerts);

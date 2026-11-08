@@ -30,6 +30,13 @@ export const registerCallSession = (s: CallSession) => sessions.set(String(s.att
 export const getCallSession = (attemptId: Id) => sessions.get(String(attemptId));
 export const dropCallSession = (attemptId: Id) => sessions.delete(String(attemptId));
 
+// Who actually produced each spoken turn on REAL calls — proof that Nemotron is the brain (shown at /health).
+export const liveCallStats = { nemotronTurns: 0, fallbackTurns: 0, lastNemotronAt: null as string | null };
+function countTurn(byModel: boolean) {
+  if (byModel) { liveCallStats.nemotronTurns++; liveCallStats.lastNemotronAt = new Date().toISOString(); }
+  else liveCallStats.fallbackTurns++;
+}
+
 const MAX_FOLLOWUPS = 3;
 const DANGER_RULE = `Also set danger=true ONLY if the caller's LAST message describes IMMEDIATE danger to life right now:
 trapped, unconscious/unresponsive, not breathing, severe bleeding, collapse, chest pain/stroke, rising water inside,
@@ -151,6 +158,7 @@ export class CallBrain {
       const q = CORE_QUESTIONS[this.coreIdx++];
       const r = await this.ack(transcript);
       this.lastAsked = q;
+      if (!this.s.simulated) countTurn(Boolean(r));
       return { reply: { say: `${r?.ack ?? "Thank you."} ${q}`, endCall: false }, danger: r?.danger };
     }
 
@@ -172,6 +180,7 @@ JSON: {"say": "...", "done": boolean, "danger": boolean, "danger_reason": "max 8
         ),
         TURN_TIMEOUT_MS,
       );
+      if (!this.s.simulated) countTurn(Boolean(llm));
       if (llm) {
         const danger = llm.danger === true ? String(llm.danger_reason ?? "immediate danger") : undefined;
         if (danger) return { reply: { say: "", endCall: true }, danger };
