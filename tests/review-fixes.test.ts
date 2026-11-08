@@ -51,3 +51,12 @@ test("unwakeable / blue / seizing person always triggers (keyword, no model need
   assert.equal(detectDanger("Nobody is hurt now, my neighbor was trapped earlier but the fire department got her out.").danger, false);
   assert.equal(detectDanger("My son was swept away by the water!").danger, true);
 });
+
+test("guard needs a FAILURE for devices/breathing (live false alarm: 'Oxygen device access uncertain')", () => {
+  assert.equal(isConcreteThreat("Oxygen device access uncertain", "I don't think so."), false);
+  assert.equal(isConcreteThreat("about the emergency", "What emergency?"), false);
+  assert.equal(isConcreteThreat("breathing fine", "We're breathing fine, just scared."), false);
+  for (const t of ["My oxygen machine just stopped", "the concentrator battery is almost dead", "he's not breathing", "she can't breathe"]) {
+    assert.equal(isConcreteThreat(undefined, t), true, t);
+  }
+});

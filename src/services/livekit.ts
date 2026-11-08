@@ -36,10 +36,24 @@ export async function placeVoiceCall(i: PlaceCallInput): Promise<{ externalId: s
   // Dial in the background; the coordinator shouldn't block on ringing.
   void (async () => {
     try {
-      await new SipClient(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET).createSipParticipant(
-        LIVEKIT_SIP_TRUNK_ID, i.toPhone, room,
-        { participantIdentity: `callee-${i.personId}`, fromNumber: PHOTON_PHONE_NUMBER, waitUntilAnswered: true, ringingTimeout: 30, maxCallDuration: 600 },
-      );
+      // Photon sometimes rejects the first INVITE after the line has been idle (403), then accepts an immediate retry.
+      const sip = new SipClient(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await sip.createSipParticipant(
+            LIVEKIT_SIP_TRUNK_ID, i.toPhone, room,
+            { participantIdentity: `callee-${i.personId}`, fromNumber: PHOTON_PHONE_NUMBER, waitUntilAnswered: true, ringingTimeout: 30, maxCallDuration: 600 },
+          );
+          break;
+        } catch (e) {
+          const msg = String((e as Error)?.message ?? e);
+          const retryable = /403|forbidden|permission_denied|503|408|timeout/i.test(msg) && !/486|busy|declin|no.?answer|480/i.test(msg);
+          if (!retryable || attempt >= 3) throw e;
+          await logAgent({ alertId: i.alertId, personId: i.personId, agent: "system", tool: "place_voice_call",
+                           thought: `Photon rejected dial attempt ${attempt} (${msg.slice(0, 60)}) — retrying` });
+          await new Promise((r) => setTimeout(r, 1500 * attempt));
+        }
+      }
       await new AgentDispatchClient(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
         .createDispatch(room, agentName, { metadata: JSON.stringify({ attemptId: String(i.attemptId) }) });
     } catch (err) {

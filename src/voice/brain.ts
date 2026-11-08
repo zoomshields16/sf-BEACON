@@ -47,6 +47,8 @@ Property damage, outages, or problems already resolved are NOT immediate danger.
 NOT danger (danger=false): "lots of water around", "I heard thunder", "the street is flooded", "power is out", "I'm scared",
 "water is up to the steps outside". Weather and flooding OUTSIDE the home are not, by themselves, a threat to life.`;
 const MAX_TURNS = 14; // hard cap so a call can never run on forever
+// "I don't think so", "not sure", "might have to check" — an uncertain answer, not a confirmed no.
+const UNSURE = /\b(don'?t think so|not sure|i don'?t know|dunno|might (have to|need to) (go )?check|have to check|need to check|i'?ll check|maybe|possibly|not certain)\b/i;
 const NON_ANSWER = /^(hello|hi|hey|yes\?|what|huh|sorry|pardon|who is this|who's this|who is calling|can you repeat( that)?|say that again)[\s?.!,]*$/i;
 const ACK_TIMEOUT_MS = Number(process.env.VOICE_ACK_TIMEOUT_MS ?? 1500);
 const TURN_TIMEOUT_MS = Number(process.env.VOICE_TURN_TIMEOUT_MS ?? 3500);
@@ -162,11 +164,16 @@ export class CallBrain {
 
     // (1) Fixed safety questions, verbatim, with a short Nemotron acknowledgement.
     if (this.coreIdx < CORE_QUESTIONS.length) {
+      const answered = CORE_QUESTIONS[this.coreIdx - 1];
       const q = CORE_QUESTIONS[this.coreIdx++];
       const r = await this.ack(transcript);
       this.lastAsked = q;
       if (!this.s.simulated) countTurn(Boolean(r));
-      return { reply: { say: `${r?.ack ?? "Thank you."} ${q}`, endCall: false }, danger: r?.danger };
+      // Unsure whether anyone is hurt → tell them to check now, in code (never left to the model).
+      const nudge = answered === CORE_QUESTIONS[1] && UNSURE.test(lastUser)
+        ? "Please check on everyone in your home right now. If anyone is hurt, hang up and call 911. "
+        : "";
+      return { reply: { say: `${nudge || (r?.ack ?? "Thank you.") + " "}${q}`, endCall: false }, danger: r?.danger };
     }
 
     // Follow-up phase: Nemotron leads, bounded by MAX_FOLLOWUPS.
@@ -180,6 +187,7 @@ responding naturally to what they just said. Planned follow-ups (use, adapt, or 
 Rules: under 30 words, warm and calm, never promise that help or responders are coming, no medical/legal/claims advice (say a State Farm agent will follow up on claims).
 If you have what responders need, OR the caller says "that's all", "no", "nothing else", "I'm fine", set done=true and say a brief thank-you.
 Only ask about things in the caller profile or things they mentioned — never invent pets, family members or equipment.
+If the caller doesn't recognize something from their profile ("what's that?", "I don't have one"), accept it and move on — don't insist.
 ${DANGER_RULE}
 JSON: {"threat_assessment": "one sentence: what is happening and is anyone's life at risk in the next hour?", "say": "...", "done": boolean, "danger": boolean, "danger_reason": "max 8 words"}`,
           `Caller profile: ${profileSummary(this.s.ctx)}\n\nCall so far:\n${transcriptText(transcript).slice(-4000)}`,
@@ -216,7 +224,7 @@ JSON: {"threat_assessment": "one sentence: what is happening and is anyone's lif
     return withTimeout(
       chatJSON(
         `You are on a live disaster check-in call. Write a very short, calm acknowledgement (max 12 words) of what the
-caller just said. Do NOT ask a question. Never promise that help is coming.
+caller just said. Do NOT ask a question. Never promise that help is coming. Don't repeat your previous acknowledgement word for word.
 ${DANGER_RULE}
 JSON: {"threat_assessment": "one sentence: what is happening and is anyone's life at risk in the next hour?", "ack": "...", "danger": boolean, "danger_reason": "max 8 words"}`,
         transcriptText(transcript.slice(-4)),
