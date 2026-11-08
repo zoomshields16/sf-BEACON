@@ -14,7 +14,9 @@
     "db:reset": "psql -q -d ${DATABASE_URL:-safenet} -c \"select reset_demo(1)\"",
     "prepare": "git config core.hooksPath .githooks || true",
     "test": "node --import tsx --test tests/*.test.ts",
-    "test:db": "psql -v ON_ERROR_STOP=1 -q -d ${DATABASE_URL:-safenet} -f db/test.sql"
+    "test:db": "psql -v ON_ERROR_STOP=1 -q -d ${DATABASE_URL:-safenet} -f db/test.sql",
+    "db:snapshot": "mkdir -p db/snapshots && pg_dump -Fc -d ${DATABASE_URL:-safenet} -f db/snapshots/${SNAPSHOT:-mid-demo}.dump && echo \"saved db/snapshots/${SNAPSHOT:-mid-demo}.dump\"",
+    "db:restore": "pg_restore --clean --if-exists --no-owner -d ${DATABASE_URL:-safenet} db/snapshots/${SNAPSHOT:-mid-demo}.dump && echo \"restored ${SNAPSHOT:-mid-demo} — restart npm run dev\""
   },
   "engines": {
     "node": ">=20"
