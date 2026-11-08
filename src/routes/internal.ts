@@ -2,7 +2,7 @@
 import { Router } from "express";
 import { dropCallSession, getCallSession } from "../voice/brain.js";
 import { generateCallScript } from "../agents/triage.js";
-import { handleCallEnded, markCriticalNow } from "../agents/pipeline.js";
+import { flagForReview, handleCallEnded, markCriticalNow } from "../agents/pipeline.js";
 import { findAttempt, personContext } from "../repo.js";
 
 export const internal = Router();
@@ -29,6 +29,14 @@ internal.post("/calls/:attemptId/danger", async (req, res) => {
   const attempt = await findAttempt(req.params.attemptId);
   if (!attempt) return res.status(404).json({ error: "unknown attempt" });
   await markCriticalNow(attempt.alert_id, attempt.person_id, String(req.body?.text ?? ""), req.body?.matched ?? []);
+  res.json({ ok: true });
+});
+
+// Risk-model disagreement on a live call → human review (urgent assistance), never 911.
+internal.post("/calls/:attemptId/review", async (req, res) => {
+  const attempt = await findAttempt(req.params.attemptId);
+  if (!attempt) return res.status(404).json({ error: "unknown attempt" });
+  await flagForReview(attempt.alert_id, attempt.person_id, String(req.body?.text ?? ""), String(req.body?.reason ?? "Model disagreement"));
   res.json({ ok: true });
 });
 

@@ -1,13 +1,13 @@
 // The contact lifecycle: reach out → result arrives (LiveKit agent or mock) → triage → escalate → follow up.
 import { composeOutreachText, composeReply, extractTriage, generateCallScript } from "./triage.js";
-import { maybeEscalate, welfareEscalation, welfareUrgency } from "./escalation.js";
+import { buildAssistPayload, maybeEscalate, welfareEscalation, welfareUrgency } from "./escalation.js";
 import { EMERGENCY_LINE } from "./safety.js";
 import { placeVoiceCall } from "../services/livekit.js";
 import { registerCallSession } from "../voice/brain.js";
 import type { CallOutcome } from "../voice/cases.js";
 import { sendText } from "../services/photon.js";
 import {
-  addMessage, countUnreached, ctxHistory, ctxName, ctxPhone, findAttempt, finishAttempt, getTriage, insertAttempt,
+  addMessage, countUnreached, createEscalation, openEscalationFor, ctxHistory, ctxName, ctxPhone, findAttempt, finishAttempt, getTriage, insertAttempt,
   latestAttempt, logAgent, setDoNotContact, personContext, setAttemptExternalId, updateTriage,
   type Channel, type Id, type Row, type TriageFields,
 } from "../repo.js";
@@ -133,6 +133,15 @@ async function applyTriage(alertId: Id, personId: Id, t: TriageFields) {
 }
 
 /** Called the moment danger is heard on a live call — escalate before the call even ends. */
+/** A model disagreement on a live call → urgent-assistance request so a human verifies. Never a 911 escalation. */
+export async function flagForReview(alertId: Id, personId: Id, userText: string, reason: string) {
+  if (await openEscalationFor(alertId, personId, "urgent_assist")) return;
+  const ctx = await personContext(personId, alertId);
+  const triage = (await getTriage(alertId, personId)) ?? { status: "unreached", urgency_score: 0, emergency_type: null, needs: [], location_in_home: null, notes: "" };
+  const id = await createEscalation(alertId, personId, reason, buildAssistPayload(ctx, triage as TriageFields, reason), "urgent_assist");
+  await logAgent({ alertId, personId, agent: "escalation", tool: "request_assistance", thought: `Human review requested (#${id}): ${reason}` });
+}
+
 export async function markCriticalNow(alertId: Id, personId: Id, userText: string, matched: string[]) {
   const ctx = await personContext(personId, alertId);
   const t = await applyTriage(alertId, personId, {

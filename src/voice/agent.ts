@@ -157,6 +157,8 @@ export default defineAgent({
 
     const brain = new CallBrain(session, async (text, matched) => {
       if (attempt != null) await api(`/internal/calls/${attempt}/danger`, { text, matched });
+    }, async (text, reason) => {
+      if (attempt != null) await api(`/internal/calls/${attempt}/review`, { text, reason });
     });
     const agent = new SafeNetCaller(brain, hangup);
     ctx.addShutdownCallback(finish);

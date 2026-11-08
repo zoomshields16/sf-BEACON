@@ -60,3 +60,13 @@ test("guard needs a FAILURE for devices/breathing (live false alarm: 'Oxygen dev
     assert.equal(isConcreteThreat(undefined, t), true, t);
   }
 });
+
+test("PyTorch risk model loads and its forward pass returns a probability distribution", async () => {
+  const { riskModelAvailable, predictFromEmbedding } = await import("../src/agents/risk-model.js");
+  if (!riskModelAvailable()) return;              // weights not trained in this checkout
+  const w = JSON.parse((await import("node:fs")).readFileSync("ml/model/risk_classifier.json", "utf8"));
+  const probs = predictFromEmbedding(new Array(w.dim).fill(0));
+  const total = Object.values(probs).reduce((a: number, b: any) => a + b, 0);
+  assert.ok(Math.abs(total - 1) < 1e-6);
+  assert.deepEqual(Object.keys(probs), ["life_threat", "urgent", "routine", "safe"]);
+});

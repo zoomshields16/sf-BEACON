@@ -6,6 +6,7 @@
 //   2. Every user turn is keyword-scanned; danger → 911 line, end call, mark critical + escalate mid-call.
 //   3. If Nemotron is slow or returns junk, we speak the next scripted question instead.
 import { chatJSON, type Priority } from "../agents/nemotron.js";
+import { classifyRisk, riskModelAvailable } from "../agents/risk-model.js";
 import { CORE_QUESTIONS, EMERGENCY_LINE, detectDanger, isConcreteThreat, stripFalsePromises } from "../agents/safety.js";
 import type { CallScript } from "../agents/triage.js";
 import { CASE_REPLIES, SILENCE_GIVEUP, classify, type CallCase, type CallOutcome } from "./cases.js";
@@ -75,7 +76,19 @@ export class CallBrain {
   private distressMentions = 0;
   /** Set when the call ends for a special reason (voicemail, opt-out, silence…); null = normal flow. */
   outcome: CallOutcome | null = null;
-  constructor(private s: CallSession, private onDanger?: (userText: string, matched: string[]) => Promise<void>) {}
+  constructor(
+    private s: CallSession,
+    private onDanger?: (userText: string, matched: string[]) => Promise<void>,
+    /** Risk model sees a likely life threat the keywords + Nemotron did not → a human reviews (never the 911 line). */
+    private onReview?: (userText: string, reason: string) => Promise<void>,
+  ) {}
+  private reviewed = false;
+
+  /** Third opinion: PyTorch Lightning classifier on Nemotron embeddings (ml/). Real calls only; ~1 s budget. */
+  private async riskOpinion(text: string) {
+    if (this.s.simulated || !riskModelAvailable() || !text.trim()) return null;
+    return withTimeout(classifyRisk(text).catch(() => null), 1500);
+  }
 
   /** First thing said when the call connects. */
   opening(): BrainReply {
@@ -115,7 +128,13 @@ export class CallBrain {
       this.log(`Call case: ${kase}`, { lastUser });
       if (out.endCall) this.outcome = kase;
     } else {
-      const { reply, danger } = await this.normalReply(transcript);
+      const [{ reply, danger }, risk] = await Promise.all([this.normalReply(transcript), this.riskOpinion(lastUser)]);
+      if (risk) this.log(`Risk model (PyTorch): ${risk.label} ${Math.round(risk.p * 100)}%`, risk.probs);
+      if (risk?.label === "life_threat" && risk.p >= 0.8 && !(danger && isConcreteThreat(danger, lastUser)) && !this.reviewed) {
+        this.reviewed = true;
+        this.log(`Risk model sees a possible life threat (${Math.round(risk.p * 100)}%) that Nemotron did not — flagged for human review`, { lastUser });
+        await this.onReview?.(lastUser, `Risk model flagged possible life threat (${Math.round(risk.p * 100)}%): "${lastUser.slice(0, 120)}"`).catch(() => {});
+      }
       // The model's flag must name a concrete life threat (its reason or the caller's words) — weather alone never triggers 911.
       if (danger && isConcreteThreat(danger, lastUser)) return this.emergency(lastUser, [`nemotron: ${danger}`]);
       if (danger) this.log(`Nemotron flagged "${danger}" but no concrete life threat was stated — continuing the call`, { lastUser });

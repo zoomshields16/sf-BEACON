@@ -17,7 +17,12 @@
     "test:db": "psql -v ON_ERROR_STOP=1 -q -d ${DATABASE_URL:-safenet} -f db/test.sql",
     "db:snapshot": "mkdir -p db/snapshots && pg_dump -Fc -d ${DATABASE_URL:-safenet} -f db/snapshots/${SNAPSHOT:-mid-demo}.dump && echo \"saved db/snapshots/${SNAPSHOT:-mid-demo}.dump\"",
     "db:restore": "pg_restore --clean --if-exists --no-owner -d ${DATABASE_URL:-safenet} db/snapshots/${SNAPSHOT:-mid-demo}.dump && echo \"restored ${SNAPSHOT:-mid-demo} — restart npm run dev\"",
-    "brev:tunnel": "sh scripts/brev-tunnel.sh"
+    "brev:tunnel": "sh scripts/brev-tunnel.sh",
+    "ml:generate": "tsx ml/generate.ts",
+    "ml:embed": "tsx ml/embed.ts",
+    "ml:train": "ml/.venv/bin/python ml/train.py",
+    "ml:eval": "tsx ml/eval.ts",
+    "ml:setup": "python3.12 -m venv ml/.venv && ml/.venv/bin/pip install -q torch lightning scikit-learn numpy"
   },
   "engines": {
     "node": ">=20"
