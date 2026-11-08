@@ -42,6 +42,39 @@ export async function welfareEscalation(ctx: Row, triage: TriageFields, alertId:
 }
 
 /**
+ * Strict "urgent today?" call. Urgent ONLY if something life-sustaining runs out within ~12 hours, or a vulnerable
+ * person cannot stay safely at home tonight. Everything else is routine follow-up (still on the "needs help" list).
+ */
+export async function decideAssistance(ctx: Row, triage: TriageFields): Promise<{ urgent: boolean; reason: string; hours: number | null } | null> {
+  return chatJSON(
+    `You route disaster cases for State Farm. This person is NOT in immediate danger (that would already be 911).
+Be strict and skeptical: responders are scarce, so mark urgent ONLY if one of these is true based on what the caller said:
+  1. Life-sustaining medication or medical equipment (oxygen, dialysis, ventilator, powered medical device) will run out
+     or fail within about 12 hours.
+  2. The home is unsafe tonight AND the person can't leave on their own (mobility, no transport, flooded roads) AND has
+     no safe place to go.
+  3. A child, elderly or disabled person has no heat/cooling in dangerous temperatures tonight.
+NOT urgent (routine follow-up): power out but okay, supplies for a day or more, insulin without ice (room-temperature
+insulin lasts weeks), property damage, anxiety, wants information, needs a ride "later" or "if roads clear".
+Estimate hours_until_harm (null if no concrete deadline). urgent must be false if hours_until_harm is null or > 12.
+Examples:
+  "power out, out of ice for my insulin, otherwise okay" → {"urgent": false, "hours_until_harm": null, "reason": "Insulin is stable at room temperature for weeks; routine check on power."}
+  "insulin needs to stay cold, 87, wheelchair, power out" → {"urgent": false, "hours_until_harm": null, "reason": "Insulin is fine unrefrigerated; mobility needs a routine follow-up."}
+  "oxygen machine battery has about 3 hours left, power is out" → {"urgent": true, "hours_until_harm": 3, "reason": "Oxygen battery runs out in ~3 h; needs power or relocation."}
+  "heat is out, 15 degrees tonight, we're both in our 80s" → {"urgent": true, "hours_until_harm": 10, "reason": "Elderly couple without heat in freezing temperatures tonight."}
+  "might need a ride later if the roads clear" → {"urgent": false, "hours_until_harm": null, "reason": "Transport request with no deadline."}
+JSON: {"urgent": boolean, "hours_until_harm": number|null, "reason": "one short sentence for the responder"}`,
+    JSON.stringify({ triage, profile: ctx.profile ?? null, saferoom: ctx.saferoom ?? null }).slice(0, 3000),
+    (x: any) => {
+      if (typeof x?.urgent !== "boolean" || typeof x?.reason !== "string") return null;
+      const hours = typeof x.hours_until_harm === "number" ? x.hours_until_harm : null;
+      // Enforce the rule in code too: no concrete deadline within 12 h → not urgent.
+      return { urgent: x.urgent && hours !== null && hours <= 12, reason: x.reason, hours };
+    },
+  );
+}
+
+/**
  * 911 is for life-or-death ONLY: triage must be critical (danger heard on the call, or Nemotron's life-threat flag).
  * High-urgency needs (medication, power for medical equipment, transport) go to the State Farm responder queue —
  * Nemotron decides whether it's urgent today and writes the handoff reason.
@@ -61,22 +94,16 @@ export async function maybeEscalate(ctx: Row, triage: TriageFields, alertId: Id,
     return id;
   }
 
-  if (triage.status !== "needs_help" || triage.urgency_score < 60) return null;
+  // Let Nemotron judge every "needs help within a day or two" case (45+); its 12-hour rule decides what's urgent.
+  if (triage.status !== "needs_help" || triage.urgency_score < 45) return null;
   if (await openEscalationFor(alertId, personId, "urgent_assist")) return null;
 
-  const decision = await chatJSON(
-    `You route disaster cases for State Farm. This person is NOT in immediate danger (that would already be a 911 case).
-Decide if they need a State Farm responder to follow up urgently TODAY (medication that must stay cold, power for
-medical equipment, can't evacuate, no safe place to stay) versus routine follow-up. Never send this to 911.
-JSON: {"urgent": boolean, "reason": "one short sentence for the responder"}`,
-    JSON.stringify({ triage, profile: ctx.profile ?? null }).slice(0, 3000),
-    (x: any) => (typeof x?.urgent === "boolean" && typeof x?.reason === "string" ? x : null),
-  );
-  const urgent = decision ? decision.urgent : triage.urgency_score >= 70;   // no model → urgency threshold
+  const decision = await decideAssistance(ctx, triage);
+  const urgent = decision ? decision.urgent : triage.urgency_score >= 80;   // no model → only clearly time-critical
   const reason = decision?.reason ?? `Needs help (urgency ${triage.urgency_score}): ${triage.needs.join(", ") || "follow-up"}`;
   await logAgent({
     alertId, personId, agent: "escalation", tool: "decide_assistance",
-    thought: `${decision ? "Nemotron" : "Rule"}: ${urgent ? "urgent responder follow-up" : "routine follow-up"} — ${reason}`,
+    thought: `${decision ? "Nemotron" : "Rule"}: ${urgent ? `URGENT (harm in ~${decision?.hours ?? "?"} h)` : "routine follow-up"} — ${reason}`,
     output: decision,
   });
   if (!urgent) return null;

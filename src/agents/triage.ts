@@ -100,8 +100,18 @@ export async function extractTriage(
     `You are a disaster triage analyst. From the conversation, extract:
 {"status": "safe"|"needs_help"|"critical", "urgency_score": 0-100, "emergency_type": string|null,
  "needs": string[], "location_in_home": string|null, "notes": "one or two sentences"}
-critical = immediate danger to life (trapped, injured, rising water inside, fire, gas, can't breathe).
-needs_help = not in immediate danger but needs supplies, shelter, power, medication, or transport.`,
+critical = immediate danger to life RIGHT NOW (trapped, seriously injured, rising water inside, fire, gas, can't breathe,
+  unresponsive person, life-support equipment about to fail).
+needs_help = not in immediate danger but needs something (supplies, shelter, power, medication, transport, repairs).
+safe = everyone okay and no unmet needs. Be skeptical: don't invent needs the caller didn't state.
+urgency_score — use this scale strictly; most callers in a disaster are 10-50:
+  0-15  safe, no needs
+  20-40 minor or non-urgent needs (power out but okay, a few days of supplies, minor damage, anxious)
+  45-65 needs help within a day or two (low on medication, can't stay long-term, needs transport soon)
+  70-85 time-critical within ~12 hours for a vulnerable person (oxygen/dialysis/medical power running out,
+        can't evacuate and home unsafe tonight, no safe place to sleep tonight with elderly/children)
+  90-100 immediate danger to life (critical)
+Insulin at room temperature lasts weeks — "no ice" alone is not time-critical.`,
     `Person context: ${JSON.stringify(ctx).slice(0, 3000)}\n\nConversation:\n${transcript.slice(0, 6000)}`,
     validateTriage,
   );
