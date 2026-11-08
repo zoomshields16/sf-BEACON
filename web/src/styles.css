@@ -95,6 +95,11 @@ a { color: var(--blue); }
 .esc-meta, .esc-addr { color: var(--muted); font-size: 12px; }
 .esc-reason { margin: 6px 0; }
 .esc-actions { display: flex; gap: 8px; margin-top: 8px; }
+.esc-assist { background: #f59e0b10; border: 1px solid #f59e0b55; }
+.esc-tag-assist { color: var(--amber); }
+.btn-assist { background: var(--amber); border-color: var(--amber); color: #111; }
+.count-assist { background: var(--amber); color: #111; }
+.panel { max-height: 32%; }
 .esc-done { font-size: 12px; color: var(--muted); padding: 4px 2px; cursor: pointer; }
 
 /* agent log */

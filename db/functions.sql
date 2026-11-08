@@ -263,7 +263,8 @@ create or replace function alert_stats(p_alert_id int) returns jsonb language sq
     'on_call_now', (select count(*) from contact_attempts c where c.alert_id = p_alert_id and c.status = 'in_progress'),
     'attempts',    (select count(*) from contact_attempts c where c.alert_id = p_alert_id),
     'high_risk_hexes', (select count(*) from hex_risk(p_alert_id) r where r.risk >= 0.5),
-    'escalations_pending', (select count(*) from escalations e where e.alert_id = p_alert_id and e.status = 'pending_review')
+    'escalations_pending', (select count(*) from escalations e where e.alert_id = p_alert_id and e.status = 'pending_review' and e.kind = '911'),
+    'assist_pending',      (select count(*) from escalations e where e.alert_id = p_alert_id and e.status = 'pending_review' and e.kind <> '911')
   )
   from triage t where t.alert_id = p_alert_id
 $$;

@@ -90,17 +90,20 @@ export const TOOLS: Record<string, ToolDef> = {
   },
   escalate_to_911: {
     name: "escalate_to_911",
-    description: "Create a simulated RapidSOS 911 escalation (pending human review) for a life-threatening case.",
+    description: "Simulated RapidSOS 911 escalation (pending human review). ONLY for life-or-death cases whose triage is critical; anything else is refused.",
     parameters: {
       type: "object",
       properties: { person_id: { type: ["string", "integer"] }, reason: { type: "string" } },
       required: ["person_id", "reason"],
     },
     run: async ({ person_id, reason }, { alertId }) => {
-      const existing = await openEscalationFor(alertId, person_id);
+      const triage = (await getTriage(alertId, person_id)) as TriageFields;
+      if (triage?.status !== "critical") {
+        return { error: `911 is reserved for life-or-death cases. This person's triage is '${triage?.status ?? "unknown"}', so they are handled by the State Farm responder queue instead.` };
+      }
+      const existing = await openEscalationFor(alertId, person_id, "911");
       if (existing) return { ok: true, escalation_id: existing.id, note: "already pending" };
       const ctx = await personContext(person_id, alertId);
-      const triage = (await getTriage(alertId, person_id)) as TriageFields;
       const id = await createEscalation(alertId, person_id, reason, buildRapidSosPayload(ctx, triage, reason));
       return { ok: true, escalation_id: id };
     },

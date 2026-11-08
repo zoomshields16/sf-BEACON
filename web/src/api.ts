@@ -31,6 +31,7 @@ export interface AlertSummary {
 
 export interface Escalation {
   id: number;
+  kind?: "911" | "urgent_assist" | "welfare";
   person_id: string | number;
   reason: string;
   status: "pending_review" | "confirmed" | "dismissed";

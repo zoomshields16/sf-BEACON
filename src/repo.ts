@@ -7,7 +7,7 @@
 //   contact_attempts(id, alert_id, person_id, channel, status, external_id, started_at, ended_at)
 //   conversation_history(id, alert_id, person_id, attempt_id, channel, role, content, created_at)
 //   triage(alert_id, person_id, status, urgency_score, emergency_type, needs text[], location_in_home, notes, updated_at)
-//   escalations(id, alert_id, person_id, reason, payload jsonb, status, created_at, reviewed_at)
+//   escalations(id, alert_id, person_id, kind, reason, payload jsonb, status, created_at, reviewed_at)
 import { query } from "./db.js";
 
 export type Id = string | number;
@@ -196,19 +196,24 @@ export const updateTriage = (alertId: Id, personId: Id, t: TriageFields) =>
   );
 
 // ---------- escalations ----------
-export async function createEscalation(alertId: Id, personId: Id, reason: string, payload: unknown): Promise<Id> {
+/** '911' = life-or-death only (triage critical). Others go to the State Farm responder queue, never 911. */
+export type EscalationKind = "911" | "urgent_assist" | "welfare";
+
+export async function createEscalation(
+  alertId: Id, personId: Id, reason: string, payload: unknown, kind: EscalationKind = "911",
+): Promise<Id> {
   const rows = await query(
-    `insert into escalations (alert_id, person_id, reason, payload, status)
-     values ($1, $2, $3, $4, 'pending_review') returning id`,
-    [alertId, personId, reason, JSON.stringify(payload)],
+    `insert into escalations (alert_id, person_id, kind, reason, payload, status)
+     values ($1, $2, $3, $4, $5, 'pending_review') returning id`,
+    [alertId, personId, kind, reason, JSON.stringify(payload)],
   );
   return rows[0].id;
 }
 
-export const openEscalationFor = async (alertId: Id, personId: Id) =>
+export const openEscalationFor = async (alertId: Id, personId: Id, kind: EscalationKind = "911") =>
   (await query(
-    `select * from escalations where alert_id = $1 and person_id = $2 and status = 'pending_review' limit 1`,
-    [alertId, personId],
+    `select * from escalations where alert_id = $1 and person_id = $2 and kind = $3 and status = 'pending_review' limit 1`,
+    [alertId, personId, kind],
   ))[0] ?? null;
 
 export const listEscalations = (alertId: Id) =>

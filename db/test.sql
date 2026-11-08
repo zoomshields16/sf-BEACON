@@ -58,13 +58,16 @@ begin
   assert not exists (select 1 from call_queue(1, 5000) where person_id = 2), 'do_not_contact person is still queued';
   assert (alert_stats(1)->>'do_not_contact')::int = 1, 'alert_stats do_not_contact count wrong';
 
-  -- one open escalation per person
+  -- one open escalation of each kind per person (a person can have an assist request AND a 911 case)
   insert into escalations (alert_id, person_id, reason, payload) values (1, 1, 'test', '{}');
   begin
     insert into escalations (alert_id, person_id, reason, payload) values (1, 1, 'dup', '{}');
     assert false, 'duplicate open escalation was allowed';
   exception when unique_violation then null;
   end;
+  insert into escalations (alert_id, person_id, kind, reason, payload) values (1, 1, 'urgent_assist', 'insulin', '{}');
+  assert (alert_stats(1)->>'escalations_pending')::int = 1 and (alert_stats(1)->>'assist_pending')::int = 1,
+         'alert_stats must count 911 and assistance separately';
 
   -- context + dashboard shapes the backend relies on
   v := person_context(zoom, 1);

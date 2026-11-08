@@ -95,12 +95,18 @@ function step() {
           { channel, role: "user", content: s.answers[s.answers.length - 1], created_at: now() });
       }
       Object.assign(p, { status: kind, urgency: s.urgency, needs: s.needs, notes: s.notes });
+      if (kind === "needs_help" && p.medical) {
+        escalations.unshift({ id: escalations.length + 1, kind: "urgent_assist", person_id: p.id, status: "pending_review", created_at: now(),
+          reason: `${p.medical} at risk without power; needs responder follow-up today.`,
+          payload: { caller: { name: p.name, phone: p.phone }, location: { address: p.address }, emergency: { type: "medical need", urgency_score: s.urgency } } });
+        addLog("escalation", `Queued urgent assistance for ${p.name} (not 911)`, "request_assistance", p.id);
+      }
       addLog("triage", `Extracted triage → ${kind} (${s.urgency})${kind === "critical" ? " — SAFETY OVERRIDE: danger keywords [water, trapped]" : ""}`, "update_triage", p.id,
         { status: kind, urgency_score: s.urgency, needs: s.needs, notes: s.notes });
       if (kind === "critical") {
         const payload = { provider: "RapidSOS (simulated)", caller: { name: p.name, phone: p.phone }, location: { address: p.address, lat: p.lat, lon: p.lon },
           emergency: { type: "flood — trapped", urgency_score: s.urgency, location_in_home: "second floor", needs: s.needs, notes: s.notes } };
-        escalations.unshift({ id: escalations.length + 1, person_id: p.id, reason: "Water rising inside home; residents trapped.", status: "pending_review", payload, created_at: now() });
+        escalations.unshift({ id: escalations.length + 1, kind: "911", person_id: p.id, reason: "Water rising inside home; residents trapped.", status: "pending_review", payload, created_at: now() });
         addLog("escalation", `Created 911 escalation #${escalations.length} (pending human review)`, "escalate_to_911", p.id, payload);
         const h = hexes.reduce((b, x) => (Math.hypot(x.lat - p.lat, x.lon - p.lon) < Math.hypot(b.lat - p.lat, b.lon - p.lon) ? x : b));
         h.risk = Math.min(1, h.risk + 0.35);

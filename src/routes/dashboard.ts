@@ -27,7 +27,9 @@ dashboard.post("/escalations/:id/:decision", async (req, res) => {
   if (!row) return res.status(404).json({ error: "not found" });
   await logAgent({
     alertId: row.alert_id, personId: row.person_id, agent: "escalation",
-    thought: `Responder ${decision}ed escalation #${row.id}${decision === "confirm" ? " — payload sent to RapidSOS (simulated)" : ""}`,
+    thought: row.kind === "911"
+      ? `Responder ${decision}ed 911 escalation #${row.id}${decision === "confirm" ? " — payload sent to RapidSOS (simulated)" : ""}`
+      : `Responder ${decision === "confirm" ? "assigned" : "closed"} ${row.kind === "welfare" ? "welfare check" : "urgent assistance"} #${row.id}`,
   });
   res.json(row);
 });

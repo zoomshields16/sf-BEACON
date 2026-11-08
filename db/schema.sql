@@ -114,11 +114,13 @@ create table agent_log (
 );
 create index agent_log_alert_idx on agent_log (alert_id, id);
 
--- Simulated RapidSOS 911 handoffs; a human confirms before anything is "sent".
+-- Human-reviewed handoffs. kind '911' = simulated RapidSOS 911 (life-or-death ONLY, triage critical);
+-- 'urgent_assist' / 'welfare' = State Farm responder follow-up (medication, power, transport, unreachable).
 create table escalations (
   id           serial primary key,
   alert_id     int not null references alerts(id) on delete cascade,
   person_id    int not null references policyholders(id) on delete cascade,
+  kind         text not null default '911' check (kind in ('911', 'urgent_assist', 'welfare')),
   reason       text not null,
   payload      jsonb not null,
   status       text not null default 'pending_review' check (status in ('pending_review', 'confirmed', 'dismissed')),
@@ -126,8 +128,8 @@ create table escalations (
   reviewed_at  timestamptz
 );
 create index escalations_alert_idx on escalations (alert_id, status);
--- At most one open escalation per person per alert.
-create unique index escalations_one_open_idx on escalations (alert_id, person_id) where status = 'pending_review';
+-- At most one open escalation of each kind per person per alert.
+create unique index escalations_one_open_idx on escalations (alert_id, person_id, kind) where status = 'pending_review';
 
 -- ───────────────────── crowdsourced risk ─────────────────────
 -- Hexagon grid covering an alert (built by activate_alert).

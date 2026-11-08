@@ -84,7 +84,8 @@ export default function App() {
     }
   };
 
-  const pending = (escalations.data ?? []).filter((e) => e.status === "pending_review").length;
+  const pending = (escalations.data ?? []).filter((e) => e.status === "pending_review" && (e.kind ?? "911") === "911").length;
+  const assistPending = (escalations.data ?? []).filter((e) => e.status === "pending_review" && (e.kind ?? "911") !== "911").length;
   const apiDown = !MOCK && (health.error || health.data?.db === false);
 
   return (
@@ -167,11 +168,21 @@ export default function App() {
 
         <aside className="side">
           <div className="panel">
-            <h3>911 Escalations {pending > 0 && <span className="count">{pending}</span>}</h3>
+            <h3>911 Escalations {pending > 0 && <span className="count">{pending}</span>} <span className="muted">life-or-death only</span></h3>
             <Escalations
+              mode="911"
               items={escalations.data ?? []}
               onSelectPerson={setSelected}
               onReview={(id, d) => run(d === "confirm" ? "Escalation sent to RapidSOS (simulated)" : "Escalation dismissed", () => api.review(id, d))}
+            />
+          </div>
+          <div className="panel">
+            <h3>Urgent assistance {assistPending > 0 && <span className="count count-assist">{assistPending}</span>} <span className="muted">State Farm responders</span></h3>
+            <Escalations
+              mode="assist"
+              items={escalations.data ?? []}
+              onSelectPerson={setSelected}
+              onReview={(id, d) => run(d === "confirm" ? "Responder assigned" : "Request closed", () => api.review(id, d))}
             />
           </div>
           <div className="panel panel-grow">
