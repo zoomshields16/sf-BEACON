@@ -155,7 +155,7 @@ export const latestAttempt = async (alertId: Id, personId: Id) =>
     [alertId, personId],
   ))[0] ?? null;
 
-/** How many of this person's call attempts ended without reaching them (no_answer / failed / timeout).
+/** How many of this person's attempts ended without reaching them (no_answer / failed / timeout / unanswered text).
  *  Same definition the DB uses for call_queue and the exhausted trigger. */
 export const countUnreached = async (alertId: Id, personId: Id): Promise<number> =>
   Number((await query(`select failed_attempts($1, $2) as n`, [alertId, personId]))[0]?.n ?? 0);

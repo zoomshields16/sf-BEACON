@@ -70,12 +70,17 @@ const DANGER_PATTERNS: [string, RegExp][] = [
 // same clause, within 4 words before it. Clauses break at punctuation, newlines and but/and/however, so
 // "no one is hurt but we're trapped" and "No! The water is rising" still trigger. "can't" is deliberately NOT a negation
 // ("can't breathe" is itself a danger phrase).
-const NEGATION = /\b(no|not|nobody|none|never|nothing|without|neither|nor|isn'?t|aren'?t|wasn'?t|weren'?t|don'?t|doesn'?t|didn'?t|haven'?t|hasn'?t|ain'?t)\b/i;
+// Bare "no" is usually an answer ("No — the water is rising"), so it only negates when it's the word right before the
+// danger phrase ("no water coming in"). Other negations count within 2 words ("nobody is trapped", "we're not trapped").
+// When in doubt we keep the danger — every escalation is reviewed by a human, a missed emergency is not.
+const NEGATION = /\b(not|nobody|none|never|nothing|without|neither|nor|isn'?t|aren'?t|wasn'?t|weren'?t|don'?t|doesn'?t|didn'?t|haven'?t|hasn'?t|ain'?t|no one)\b/i;
 const CLAUSE_BREAK = /[.!?,;\n]|\b(?:but|and|however|though|although|except)\b/i;
 
 function negated(text: string, index: number): boolean {
   const clause = text.slice(0, index).split(new RegExp(CLAUSE_BREAK.source, "gi")).pop() ?? "";
-  return NEGATION.test(clause.trim().split(/\s+/).slice(-4).join(" "));
+  const words = clause.trim().split(/\s+/).filter(Boolean);
+  if (words.length && /^no$/i.test(words[words.length - 1])) return true;          // "no water coming in"
+  return NEGATION.test(words.slice(-2).join(" "));
 }
 
 export function detectDanger(userText: string): { danger: boolean; matched: string[] } {

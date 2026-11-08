@@ -29,21 +29,30 @@ export function toMultiPolygon(geoms: Geom[]): { type: "MultiPolygon"; coordinat
   return polys.length ? { type: "MultiPolygon", coordinates: polys } : null;
 }
 
+// Only successful zone fetches are cached — a timeout must not drop that zone from the alert for good.
 const zoneCache = new Map<string, Geom>();
-async function zoneGeometry(url: string): Promise<Geom> {
-  if (!zoneCache.has(url)) zoneCache.set(url, (await getJson(url).catch(() => null))?.geometry ?? null);
-  return zoneCache.get(url)!;
+async function zoneGeometry(url: string): Promise<{ geom: Geom; ok: boolean }> {
+  if (zoneCache.has(url)) return { geom: zoneCache.get(url)!, ok: true };
+  try {
+    const geom = (await getJson(url))?.geometry ?? null;
+    zoneCache.set(url, geom);
+    return { geom, ok: true };
+  } catch {
+    return { geom: null, ok: false };
+  }
 }
 
-/** The alert's own polygon if it has one, otherwise the union of its affected zones. */
+/** The alert's own polygon if it has one, otherwise the union of its affected zones.
+ *  Returns null if ANY zone failed to load, so we never store a shrunken alert (people would silently fall outside it). */
 export async function alertGeometry(feature: Row) {
   if (feature.geometry) return toMultiPolygon([feature.geometry]);
   const zones: string[] = (feature.properties?.affectedZones ?? []).slice(0, MAX_ZONES);
-  const geoms: Geom[] = [];
+  const results: { geom: Geom; ok: boolean }[] = [];
   for (let i = 0; i < zones.length; i += 6) {                       // 6 at a time — be polite to the API
-    geoms.push(...(await Promise.all(zones.slice(i, i + 6).map(zoneGeometry))));
+    results.push(...(await Promise.all(zones.slice(i, i + 6).map(zoneGeometry))));
   }
-  return toMultiPolygon(geoms);
+  if (results.some((r) => !r.ok)) return null;                      // retry next sync instead of shrinking
+  return toMultiPolygon(results.map((r) => r.geom));
 }
 
 export interface NwsQuery {
@@ -67,7 +76,7 @@ export async function syncNwsAlerts(q: NwsQuery = {}) {
   for (const f of features) {
     const p = f.properties ?? {};
     const geometry = await alertGeometry(f);
-    if (!geometry) { skipped.push(`${p.event}: no geometry`); continue; }
+    if (!geometry) { skipped.push(`${p.event}: geometry unavailable (zone fetch failed or none) — kept previous shape`); continue; }
     const id = await upsertNwsAlert({
       nwsId: p.id ?? f.id, eventType: p.event, headline: p.headline, description: p.description,
       severity: p.severity, urgency: p.urgency, areaDesc: p.areaDesc, geometry,

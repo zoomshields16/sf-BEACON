@@ -53,6 +53,13 @@ async function welfareIfExhausted(alertId: Id, personId: Id) {
 
 export const isInFlight = (alertId: Id, personId: Id) => inFlight.has(key(alertId, personId));
 
+/** Demo reset: forget in-flight calls and phone lookups for this alert (the DB rows are already gone). */
+export function forgetAlert(alertId: Id) {
+  const prefix = `${alertId}:`;
+  for (const [k, t] of inFlight) if (k.startsWith(prefix)) { clearTimeout(t); inFlight.delete(k); }
+  for (const [phone, ref] of phoneIndex) if (String(ref.alertId) === String(alertId)) phoneIndex.delete(phone);
+}
+
 function clearInFlight(alertId: Id, personId: Id) {
   const k = key(alertId, personId);
   clearTimeout(inFlight.get(k));
@@ -64,23 +71,30 @@ export const textsEnabled = () => process.env.TEXTS_ENABLED === "true";
 
 export async function contactPerson(alertId: Id, personId: Id, requested: Channel) {
   if (isInFlight(alertId, personId)) return { status: "skipped", detail: "contact already in progress" };
-  if ((await getTriage(alertId, personId))?.do_not_contact) return { status: "skipped", detail: "person asked us to stop calling" };
+  // Reserve the slot BEFORE any await, so a dashboard "Call now" and a coordinator round can't both dial this person.
+  const k = key(alertId, personId);
+  inFlight.set(k, setTimeout(() => inFlight.delete(k), IN_FLIGHT_TIMEOUT_MS));
+  const release = () => clearInFlight(alertId, personId);
+
+  if ((await getTriage(alertId, personId))?.do_not_contact) { release(); return { status: "skipped", detail: "person asked us to stop calling" }; }
   const channel: Channel = requested === "sms" && !textsEnabled() ? "voice" : requested;
 
   const ctx = await personContext(personId, alertId);
   const phone = ctxPhone(ctx) ?? (process.env.MOCK_CALLS === "true" ? `+1555${String(personId).padStart(7, "0")}` : undefined);
   if (!phone) {
+    release();
     await logAgent({ alertId, personId, agent: "coordinator", thought: "No phone number on file — skipping" });
     return { status: "failed", detail: "no phone" };
   }
   phoneIndex.set(normPhone(phone), { alertId, personId });
 
   const attemptId = await insertAttempt(alertId, personId, channel);
-  const k = key(alertId, personId);
+  clearTimeout(inFlight.get(k));
   inFlight.set(k, setTimeout(async () => {
     inFlight.delete(k);
     await finishAttempt(attemptId, "timeout").catch(() => {});
     await logAgent({ alertId, personId, agent: "system", thought: `Attempt #${attemptId} timed out with no result` });
+    await welfareIfExhausted(alertId, personId).catch(() => {});   // last retry timing out still triggers the welfare check
   }, IN_FLIGHT_TIMEOUT_MS));
 
   try {
@@ -102,6 +116,7 @@ export async function contactPerson(alertId: Id, personId: Id, requested: Channe
     clearInFlight(alertId, personId);
     await finishAttempt(attemptId, "failed");
     await logAgent({ alertId, personId, agent: "system", thought: `${channel} attempt failed: ${(err as Error).message}` });
+    await welfareIfExhausted(alertId, personId).catch(() => {});   // a failed final attempt still triggers the welfare check
     return { status: "failed", attemptId, detail: (err as Error).message };
   }
 }
@@ -176,7 +191,13 @@ export async function handleCallEnded(r: CallResult) {
   const transcript = r.transcript.map((l) => `${l.role}: ${l.content}`).join("\n");
   const userText = r.transcript.filter((l) => l.role === "user").map((l) => l.content).join("\n");
 
-  const triage = await applyTriage(alertId, personId, await extractTriage(ctx, transcript, userText, alertId, personId));
+  let extracted = await extractTriage(ctx, transcript, userText, alertId, personId);
+  // Hung up before all 3 safety questions were answered → we can't call them "safe". Keep them on a responder's list.
+  if (outcome === "hangup" && extracted.status === "safe") {
+    extracted = { ...extracted, status: "needs_help", urgency_score: Math.max(extracted.urgency_score, 40), emergency_type: "unverified",
+                  notes: `Hung up before the safety questions were finished; safety not verified. ${extracted.notes}`.trim() };
+  }
+  const triage = await applyTriage(alertId, personId, extracted);
   await maybeEscalate(ctx, triage, alertId, personId);
 
   // Belt-and-braces: a critical call also gets the 911 instruction in writing.

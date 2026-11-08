@@ -2,7 +2,7 @@ import { Router } from "express";
 import { activateAlert, alertsOverview, logAgent, resetDemo, simulateReports } from "../repo.js";
 import { syncNwsAlerts } from "../services/nws.js";
 import { coordinatorRound, isAutopilot, startAutopilot, stopAutopilot } from "../agents/coordinator.js";
-import { contactPerson } from "../agents/pipeline.js";
+import { contactPerson, forgetAlert } from "../agents/pipeline.js";
 
 export const alerts = Router();
 
@@ -35,6 +35,7 @@ alerts.post("/:id/activate", async (req, res) => {
 // Demo rehearsal: stop the agent and wipe all activity for this alert (then press Activate again).
 alerts.post("/:id/reset", async (req, res) => {
   stopAutopilot(req.params.id);
+  forgetAlert(req.params.id);          // otherwise people mid-call stay blocked for up to 12 min after the reset
   res.json(await resetDemo(req.params.id));
 });
 

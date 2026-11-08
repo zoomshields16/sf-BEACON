@@ -140,10 +140,11 @@ $$;
 
 -- ───────────────────────── contact queue ─────────────────────────
 
--- Unanswered attempts (no_answer / failed / timeout) for one person in one alert.
+-- Unanswered attempts for one person in one alert: calls that ended no_answer / failed / timeout, plus texts that
+-- were sent but never replied to (a reply flips 'sent' → 'replied').
 create or replace function failed_attempts(p_alert_id int, p_person_id int) returns int language sql stable as $$
   select count(*)::int from contact_attempts
-  where alert_id = p_alert_id and person_id = p_person_id and status in ('no_answer', 'failed', 'timeout')
+  where alert_id = p_alert_id and person_id = p_person_id and status in ('no_answer', 'failed', 'timeout', 'sent')
 $$;
 
 -- Next people to contact, most urgent first. Only people not yet reached, not already on a call,

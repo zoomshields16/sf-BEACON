@@ -92,7 +92,7 @@ export class CallBrain {
     if (keyword.danger) return this.emergency(lastUser, keyword.matched);
 
     // Edge cases (voicemail, opt-out, wrong person…) are answered from code, no model call.
-    const kase = classify(lastUser);
+    const kase = classify(lastUser, transcript.filter((t) => t.role === "user").length);
     let out: BrainReply;
     if (kase) {
       out = this.caseReply(kase);

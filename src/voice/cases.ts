@@ -7,18 +7,23 @@ export type CallCase = "voicemail" | "wrong_person" | "opt_out" | "callback" | "
 /** How a call ended; sent to the API as `outcome`. */
 export type CallOutcome = "completed" | "hangup" | CallCase | "silent" | "no_answer";
 
+// Cases that only make sense at the very start of a call (a voicemail greeting, "wrong number").
+// Later in the call the same words are ordinary answers ("clean water is not available here").
+const EARLY_ONLY: CallCase[] = ["voicemail", "wrong_person"];
+
 const CASES: [CallCase, RegExp][] = [
   ["opt_out", /stop (calling|contacting)|(don'?t|do not) (call|contact|text) (me )?(again|anymore|any more)?|take me off|remove (me|my number)|unsubscribe/i],
-  ["voicemail", /leave (a|your) message|after the (tone|beep)|voice ?mail|mailbox|(is|are) not available|can'?t (come to|get to) the phone|please record/i],
-  ["wrong_person", /wrong number|wrong person|no ?one (here )?(by|with) that name|doesn'?t live here|(he|she|they)('s| is| are) not (here|home)|you have the wrong/i],
+  ["voicemail", /leave (a|your) message|after the (tone|beep)|voice ?mail|mailbox|(is|am|are) not available (right now|to take your call)|the (number|person) you (have )?(dialed|are calling)|can'?t (come to|get to) the phone|please record/i],
+  ["wrong_person", /wrong number|wrong person|no ?one (here )?(by|with) that name|(nobody|no one) by that name|doesn'?t live here|you have the wrong/i],
   ["language", /(don'?t|do not|no) (speak|understand) (any )?english|no hablo|habla espa|en español|speak (spanish|chinese|vietnamese|korean|arabic)/i],
-  ["callback", /call (me )?(back|later)|not a good time|bad time|busy right now|in a meeting|can you try again/i],
+  ["callback", /call (me )?back( later)?|call (me )?later|(is|it'?s) not a good time( to talk)?|(this is|it'?s) (a )?bad time to talk|i'?m busy right now|in a meeting|can you try again later/i],
   ["ai_question", /(are|r) you (a |an )?(robot|real person|human|bot|machine|ai|recording|computer)|is this (a |an )?(scam|spam|recording|robot|robocall)/i],
   ["help_question", /(when|how long).{0,30}(help|someone|anyone|they).{0,20}(come|coming|arrive|get here|be here)|is (help|anyone|someone) (coming|on the way)/i],
 ];
 
-export function classify(callerText: string): CallCase | null {
-  return CASES.find(([, re]) => re.test(callerText))?.[0] ?? null;
+/** `callerTurn` = 1 for the caller's first reply. Voicemail / wrong-person only count on that first reply. */
+export function classify(callerText: string, callerTurn = 1): CallCase | null {
+  return CASES.find(([k, re]) => (callerTurn <= 1 || !EARLY_ONLY.includes(k)) && re.test(callerText))?.[0] ?? null;
 }
 
 const SAFE_TAIL = `If anyone is in danger, ${EMERGENCY_LINE.toLowerCase()}`;

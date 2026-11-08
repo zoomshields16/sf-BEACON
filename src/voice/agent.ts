@@ -120,10 +120,16 @@ export default defineAgent({
     const meta = JSON.parse(ctx.job.metadata || "{}") as { attemptId?: string };
     await ctx.connect();
 
-    const session = meta.attemptId
-      ? await api<CallSession>(`/internal/calls/${meta.attemptId}`).catch((e) => { console.error(e); return testSession(); })
-      : testSession();
-    const attempt = session.attemptId;
+    // Retry the session fetch; if the API is still down, run the safe default script but KEEP the attempt id,
+    // so danger escalations and the call result are still reported once the API answers.
+    let session: CallSession = testSession();
+    if (meta.attemptId) {
+      for (let i = 0; i < 3; i++) {
+        try { session = await api<CallSession>(`/internal/calls/${meta.attemptId}`); break; }
+        catch (e) { console.error(`session fetch ${i + 1}/3 failed:`, (e as Error).message); await new Promise((r) => setTimeout(r, 500 * (i + 1))); }
+      }
+    }
+    const attempt = session.attemptId ?? meta.attemptId ?? null;
 
     let finished = false;
     const finish = async () => {
@@ -133,8 +139,11 @@ export default defineAgent({
         agent.transcript.map((t) => `${t.role === "agent" ? "AGENT" : "CALLER"}: ${t.content}`).join("\n") + "\n=====\n");
       if (attempt == null) return;
       const answered = agent.transcript.some((t) => t.role === "user");
-      // Never spoke → "silent". Otherwise the brain's special outcome, or "hangup" if the safety questions were cut short.
-      const outcome: CallOutcome = !answered ? "silent" : brain.outcome ?? (brain.coreDone ? "completed" : "hangup");
+      // "silent" ONLY when the brain gave up after silence reminders on a live line. Never said a word and hung up
+      // (or STT missed them) → treat as not reached and retry — not an emergency.
+      const outcome: CallOutcome = !answered
+        ? (brain.outcome === "silent" ? "silent" : "no_answer")
+        : brain.outcome ?? (brain.coreDone ? "completed" : "hangup");
       await api(`/internal/calls/${attempt}/ended`, { answered, outcome, transcript: agent.transcript }).catch(console.error);
     };
     const hangup = async () => {
